@@ -132,10 +132,19 @@ class Project:
 
     def file_arg(self, value):
         candidate = Path(value)
+        if '..' in candidate.parts:
+            raise GBMError('Path is outside the monitored scope.')
         if not candidate.is_absolute():
             candidate = Path.cwd() / candidate
+        # Canonicalize Windows short-name aliases just as Project.__init__ does.
+        # Check the original path first so resolution cannot hide a symlink.
+        for part in (candidate, *candidate.parents):
+            if part.resolve() == self.root:
+                break
+            if part.is_symlink() or (hasattr(part, 'is_junction') and part.is_junction()):
+                raise GBMError('Symbolic links and junctions are not monitored.')
         try:
-            rel = candidate.absolute().relative_to(self.root).as_posix()
+            rel = candidate.resolve().relative_to(self.root).as_posix()
         except ValueError:
             raise GBMError('File must be inside the project.')
         self.path(rel)
