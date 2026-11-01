@@ -16,6 +16,10 @@ def main(argv=None):
     commands.add_parser('watch', help='Start background monitoring')
     commands.add_parser('status', help='Show watcher heartbeat and checkpoint count')
     commands.add_parser('stop', help='Stop monitoring gracefully')
+    browse = commands.add_parser('history', help='Browse recorded project or file checkpoints')
+    browse.add_argument('file', nargs='?')
+    browse.add_argument('--limit', type=int, default=20, help='Maximum entries to show (default: 20)')
+    browse.add_argument('--all', action='store_true', help='Include safety snapshots as well as automatic checkpoints')
     undo = commands.add_parser('undo', help='Restore the previous project or file version')
     undo.add_argument('file', nargs='?')
     undo.add_argument('--minutes', type=float, help='Restore file from the latest checkpoint at or before N minutes ago')
@@ -45,6 +49,21 @@ def main(argv=None):
                 print('[GBM] Watcher: INACTIVE. No history initialized.')
                 return 0
             raise GBMError('No GBM history exists. Run gbm watch first.')
+        if args.command == 'history':
+            from .history import history
+            rel = project.file_arg(args.file) if args.file else None
+            entries = history(project, rel, args.limit, args.all)
+            print(f"[GBM] History: {rel or project.root}")
+            if not entries:
+                print('[GBM] No recorded history for this file.' if rel else '[GBM] No checkpoints recorded.')
+                return 0
+            print('CHECKPOINT  LOCAL TIME                KIND        CHANGE             CONTENT / SIZE')
+            for entry in entries:
+                marker = '*' if entry['head'] else ' '
+                stamp = time.strftime('%Y-%m-%d %H:%M:%S %z', time.localtime(entry['created']))
+                print(f"{marker}#{entry['id']:<9} {stamp:<25} {entry['kind']:<11} {entry['change']:<18} {entry['detail']}")
+            print('[GBM] Newest first. * = project undo position, not necessarily the current file contents.')
+            return 0
         if args.command == 'session':
             from . import sessions
             if args.action == 'start':

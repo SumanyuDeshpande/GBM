@@ -27,7 +27,7 @@ Validate in a fresh environment:
 
 ```powershell
 python -m venv gbm-check
-gbm-check\Scripts\python -m pip install --index-url https://pypi.org/simple gbm-local==1.3.0
+gbm-check\Scripts\python -m pip install --index-url https://pypi.org/simple gbm-local==1.4.0
 gbm-check\Scripts\gbm --help
 gbm-check\Scripts\gbm undo --help
 ```

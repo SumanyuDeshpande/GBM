@@ -111,3 +111,16 @@ Before discarding, GBM shows the number of changed files and folders. Invalid an
 Sessions follow the configured exclusions, so `.git`, `.gbm`, dependency environments, sensitive filename patterns, and other excluded paths are not reverted. If an added directory contains excluded files or links, discard refuses to remove that directory before making project changes. Move those excluded items elsewhere and retry, or keep the session. Changing exclusion patterns during a session blocks ending it until the original patterns are restored. A failed restoration leaves a persistent journal; `gbm recover` rolls back the partial restoration to the pre-discard state and keeps the session active so you can retry.
 
 Installed libraries, databases, running processes, external services, permissions, and unsaved editor buffers are outside session recovery. This is local file recovery, not an execution sandbox. After upgrading, stop and restart old watchers (`gbm stop`, then `gbm watch`) before starting a session. Older watchers are detected and must be restarted so they honor session recovery journals.
+
+## Version 1.4 — checkpoint history
+
+```powershell
+gbm history                       # Latest 20 automatic project checkpoints
+gbm history main.py               # Latest 20 recorded changes to this file
+gbm history main.py --limit 50     # Show more entries
+gbm history --all                 # Include pre-restore safety snapshots
+```
+
+History shows checkpoint IDs, local timestamps with UTC offsets, checkpoint kinds, and newest entries first. Project rows summarize additions (`+`), modifications (`~`), deletions (`-`), and total recorded file count relative to the previous automatic checkpoint. File rows show ADDED, MODIFIED, or DELETED with a short content hash. Repeated identical file contents in consecutive automatic checkpoints are omitted; delete/recreate transitions remain visible. Deleted files can be queried by their original path. An unrecorded file produces a meaningful empty-history message.
+
+`--all` includes safety snapshots, explicitly labeled SNAPSHOT or ABSENT, without changing the comparison between automatic checkpoints. `*` marks the project's undo-navigation checkpoint, not the current on-disk state or a file's independent undo position. History includes recorded checkpoints on earlier development paths after undo; it is not a list of every undo/redo operation. Browsing never checkpoints current edits, restores files, or clears redo. Pending saved edits appear only after capture. Ordinary checkpoint history tracks files; session empty-folder state is stored separately. Selecting a checkpoint for restoration is not part of this release.
