@@ -200,6 +200,7 @@ class Project:
         if baseline == state:
             return None
         number = self.checkpoint(state)
+        self.set('project_redo', [])
         # New edits invalidate redo only for the edited files.
         with self.db() as db:
             for rel in set(baseline or {}) | set(state):
@@ -221,6 +222,16 @@ class Project:
             raise GBMError('Interrupted restore detected. Run gbm recover.')
         current = self.scan()
         self.capture(current)
+        if redo and rel is None:
+            stack = self.get('project_redo', [])
+            if not stack:
+                raise GBMError('No eligible project redo exists. Undo the project first.')
+            entry = stack[-1]
+            if current != entry['expected'] or self.get('head') != entry['expected_head']:
+                raise GBMError('Project changed since undo; project redo is no longer available.')
+            return current, entry['state'], {'head': entry['head'], 'project_redo': stack[:-1],
+                                              'expected_project_redo': stack,
+                                              'expected_head': self.get('head')}
         if redo:
             with self.db() as db:
                 row = db.execute('SELECT stack FROM redo WHERE path=?', (rel,)).fetchone()
@@ -264,7 +275,13 @@ class Project:
                                      'file_head': versions[1][0], 'old_head': cursor}
         if len(rows) < 2:
             raise GBMError('No previous project checkpoint exists.')
-        return current, json.loads(rows[1][1]), {'head': rows[1][0]}
+        target = json.loads(rows[1][1])
+        stack = self.get('project_redo', [])
+        expected_stack = list(stack)
+        stack.append({'state': current, 'head': head,
+                      'expected': target, 'expected_head': rows[1][0]})
+        return current, target, {'head': rows[1][0], 'project_redo': stack,
+                                 'expected_project_redo': expected_stack, 'expected_head': head}
 
     @staticmethod
     def assign(state, rel, value):
@@ -276,6 +293,10 @@ class Project:
     def apply(self, before, target, action):
         if self.scan() != before:
             raise GBMError('Recovery conflict: project changed after preview. Nothing restored.')
+        if 'expected_project_redo' in action and (
+                self.get('project_redo', []) != action['expected_project_redo'] or
+                self.get('head') != action['expected_head']):
+            raise GBMError('Recovery conflict: history changed after preview. Nothing restored.')
         self.checkpoint(before, 'safety')
         # Validate every object and destination before any project mutation.
         for rel, digest in target.items():
@@ -287,6 +308,8 @@ class Project:
                        (operation, time.time(), 'pending', json.dumps(before), json.dumps(target)))
         self.write_state(before, target)
         with self.db() as db:
+            db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)',
+                       ('project_redo', json.dumps(action.get('project_redo', []))))
             if 'rel' in action:
                 rel = action['rel']
                 if 'redo' in action:
@@ -349,3 +372,4 @@ class Project:
             db.execute("UPDATE operations SET status='recovered' WHERE status='pending'")
             db.execute('DELETE FROM redo')
         self.set('baseline', target)
+        self.set('project_redo', [])

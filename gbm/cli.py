@@ -19,8 +19,9 @@ def main(argv=None):
     undo.add_argument('file', nargs='?')
     undo.add_argument('--minutes', type=float, help='Restore file from the latest checkpoint at or before N minutes ago')
     undo.add_argument('-y', '--yes', action='store_true', help='Confirm project restoration')
-    redo = commands.add_parser('redo', help='Redo a file-specific undo')
-    redo.add_argument('file')
+    redo = commands.add_parser('redo', help='Redo the last project or file-specific undo')
+    redo.add_argument('file', nargs='?')
+    redo.add_argument('-y', '--yes', action='store_true', help='Confirm project restoration')
     recover = commands.add_parser('recover', help='Roll back an interrupted restore')
     recover.add_argument('-y', '--yes', action='store_true')
     internal = commands.add_parser('_watch', help=argparse.SUPPRESS)
@@ -95,7 +96,7 @@ def main(argv=None):
             print(f"[GBM] Target checkpoint: #{action['checkpoint']} ({time.ctime(action['created'])})")
         print(f'[GBM] Files affected: {affected}')
         if affected == 0:
-            print('[GBM] File already matches the selected checkpoint. Nothing restored.')
+            print('[GBM] Current files already match the target. Nothing restored.')
             return 0
         if not rel and not args.yes and input('Restore project? [y/N]: ').lower() != 'y':
             return 0

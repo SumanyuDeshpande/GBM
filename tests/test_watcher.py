@@ -38,6 +38,11 @@ class WatcherTests(unittest.TestCase):
                 with p.db() as db:
                     self.assertEqual(count,db.execute("SELECT COUNT(*) FROM checkpoints WHERE kind='automatic'").fetchone()[0])
                 cli('redo','a'); self.assertEqual((root/'a').read_text(),'two')
+                cli('undo','--yes'); self.assertEqual((root/'a').read_text(),'one')
+                cli('redo','--yes'); self.assertEqual((root/'a').read_text(),'two')
+                time.sleep(3)
+                with p.db() as db:
+                    self.assertEqual(count,db.execute("SELECT COUNT(*) FROM checkpoints WHERE kind='automatic'").fetchone()[0])
                 cli('stop'); self.assertIn('INACTIVE',cli('status'))
             finally:
                 cli('stop')
