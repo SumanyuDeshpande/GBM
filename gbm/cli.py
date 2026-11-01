@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 import uuid
+from . import __version__
 from .core import Project, GBMError
 from .watcher import active, run
 
@@ -24,6 +25,8 @@ def main(argv=None):
     redo.add_argument('-y', '--yes', action='store_true', help='Confirm project restoration')
     recover = commands.add_parser('recover', help='Roll back an interrupted restore')
     recover.add_argument('-y', '--yes', action='store_true')
+    session = commands.add_parser('session', help='Start, end, inspect, or recover an experiment session')
+    session.add_argument('action', choices=['start', 'end', 'status', 'recover'])
     internal = commands.add_parser('_watch', help=argparse.SUPPRESS)
     internal.add_argument('root')
     internal.add_argument('token')
@@ -35,11 +38,53 @@ def main(argv=None):
             run(Project(args.root), args.token)
             return 0
         project = Project.discover()
+        if args.command == 'session' and args.action == 'start':
+            project.initialize()
         if args.command != 'watch' and not (project.home / 'history.db').exists():
             if args.command == 'status':
                 print('[GBM] Watcher: INACTIVE. No history initialized.')
                 return 0
             raise GBMError('No GBM history exists. Run gbm watch first.')
+        if args.command == 'session':
+            from . import sessions
+            if args.action == 'start':
+                with project.lock():
+                    if active(project) and project.get('watcher', {}).get('version') != __version__:
+                        raise GBMError('Restart the older watcher with gbm stop and gbm watch before starting a session.')
+                    sessions.start(project)
+                print('[GBM] Session started. Monitored files and folders recorded.')
+                return 0
+            if args.action == 'status':
+                with project.lock():
+                    state = project.get('session')
+                print(f"[GBM] Session: {'ACTIVE since ' + time.ctime(state['started']) if state else 'INACTIVE'}")
+                return 0
+            with project.lock():
+                plan = sessions.preview(project, recover=args.action == 'recover')
+            before, target = plan['before'], plan['target']
+            affected = sum(before['files'].get(p) != target['files'].get(p)
+                           for p in set(before['files']) | set(target['files']))
+            folders = len(set(before['directories']) ^ set(target['directories']))
+            print(f'[GBM] Files changed: {affected}; folders changed: {folders}')
+            if args.action == 'recover':
+                answer = input('Restore the last discarded experiment? [y/N]: ').strip().lower()
+                if answer != 'y':
+                    print('[GBM] Cancelled.')
+                    return 0
+                keep = False
+            else:
+                while True:
+                    answer = input('Would you like to maintain the changes you made in the session? [y/n]: ').strip().lower()
+                    if answer in ('y', 'n'):
+                        break
+                    print('[GBM] Enter y to keep or n to discard. Ctrl+C cancels.')
+                keep = answer == 'y'
+            with project.lock():
+                sessions.finish(project, plan, keep)
+            print('[GBM] Changes kept. Session ended.' if keep else
+                  '[GBM] Discarded experiment recovered.' if args.action == 'recover' else
+                  '[GBM] Starting files and folders restored. Session ended.')
+            return 0
         if args.command == 'watch':
             project.initialize()
             with project.lock():
@@ -86,7 +131,7 @@ def main(argv=None):
                 return 0
             with project.lock():
                 project.recover()
-            print('[GBM] Pre-restore project state recovered.')
+            print('[GBM] Pre-restore state recovered. Any interrupted session remains active.')
             return 0
         rel = project.file_arg(args.file) if args.file else None
         with project.lock():

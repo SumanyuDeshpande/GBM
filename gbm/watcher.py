@@ -1,7 +1,7 @@
 """Detached polling watcher with a token-scoped heartbeat."""
 import os
 import time
-from .core import GBMError
+from . import __version__
 
 def active(project):
     state = project.get('watcher', {})
@@ -40,7 +40,7 @@ def run(project, token):
             status = project.get('watcher', {})
             if status.get('token') != token or not status.get('running'):
                 return
-            status.update(pid=os.getpid(), heartbeat=time.time())
+            status.update(pid=os.getpid(), heartbeat=time.time(), version=__version__)
             project.set('watcher', status)
             config = project.config()
             if not project.pending():

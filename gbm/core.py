@@ -182,6 +182,8 @@ class Project:
             db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', (key, json.dumps(value)))
 
     def pending(self):
+        if self.get('session_pending'):
+            return [('session',)]
         with self.db() as db:
             return db.execute("SELECT id FROM operations WHERE status='pending'").fetchall()
 
@@ -360,6 +362,10 @@ class Project:
             raise GBMError('Restore verification failed; recovery journal retained.')
 
     def recover(self):
+        if self.get('session_pending'):
+            from .sessions import recover_interrupted
+            recover_interrupted(self)
+            return
         with self.db() as db:
             rows = db.execute("SELECT id,before_state FROM operations WHERE status='pending' ORDER BY created DESC").fetchall()
         if not rows:
