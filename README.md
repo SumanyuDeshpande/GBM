@@ -21,7 +21,7 @@ Open a terminal in the project to protect:
 gbm watch                 # Initial checkpoint; detached background process
 gbm status                # Process liveness + recent heartbeat
 gbm undo main.py          # Previous distinct recorded file version
-gbm undo main.py --minutes 5 # Jump to the last checkpoint at/before five minutes ago
+gbm undo main.py --minutes N # Jump to the last checkpoint at/before N minutes ago
 gbm redo main.py          # Reapply file undo; supports multiple levels
 gbm undo                  # Preview affected count and confirm project undo
 gbm undo --yes            # Project undo without interactive confirmation
