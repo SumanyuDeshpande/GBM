@@ -1,49 +1,70 @@
 # GBM — Automatic Project Checkpointing and Recovery
 
-GBM records saved project files locally and restores earlier versions without Git commits. Python 3.10+; no runtime dependencies. This implementation uses portable filesystem polling and argparse rather than the proposed Watchdog and Typer dependencies. Windows is the tested platform; Linux/macOS code paths require validation.
+GBM records saved project files locally and restores earlier versions without Git commits. Python 3.10+; no runtime dependencies. This implementation uses portable filesystem polling and argparse rather than the proposed Watchdog and Typer dependencies. Windows is the primary platform; automated CI tests target Windows, Linux, and macOS with Python 3.10 and 3.13.
 
 ## Install
 
-From this directory:
+Install the latest published version from PyPI:
 
-```powershell
-
-python -m pip install .
-
-gbm --help
-
+```console
+python -m pip install gbm-local
 ```
 
-Or install the wheel from `dist`. If your Python Scripts folder is not on PATH, use `python -m gbm` in place of `gbm`. Source checkout usage also works from this directory without installation.
+Update an existing installation:
+
+```console
+python -m pip install --upgrade gbm-local
+```
+
+For development, run `python -m pip install .` from the source checkout. If the `gbm` command is not on PATH, use `python -m gbm` instead. Run `gbm --help` or `gbm <command> --help` for command help.
+
+## Command reference
+
+Run these commands inside your project. `<file>` means any monitored file path, not just `main.py`; quote paths containing spaces. Replace placeholders such as `<file>` and `N` with actual values.
+
+| Command | Purpose |
+| --- | --- |
+| `gbm watch` | Record the starting state and start background monitoring. |
+| `gbm status` | Show watcher status and checkpoint information. |
+| `gbm stop` | Capture current changes and stop monitoring. |
+| `gbm undo` | Restore the preceding project checkpoint, with confirmation. |
+| `gbm undo --yes` | Restore the preceding project checkpoint without prompting. |
+| `gbm undo <file>` | Restore the previous distinct recorded file version. |
+| `gbm undo <file> --minutes N` | Restore the file from the latest checkpoint at or before N minutes ago. |
+| `gbm redo` | Reverse a project undo, with confirmation. |
+| `gbm redo --yes` | Reverse a project undo without prompting. |
+| `gbm redo <file>` | Reverse a file-specific undo. |
+| `gbm session start` | Begin an experiment and preserve starting files and folders. |
+| `gbm session end` | Choose `y` to keep changes or `n` to restore the starting state. |
+| `gbm session status` | Show whether a session is active. |
+| `gbm session recover` | Review and recover the latest discarded experiment. |
+| `gbm history` | Browse the latest 20 automatic project checkpoints. |
+| `gbm history <file>` | Browse the latest 20 recorded changes to a file. |
+| `gbm history [<file>] --limit 50` | Show up to 50 entries for the project or selected file. |
+| `gbm history [<file>] --all` | Include safety snapshots in project or file history. |
+| `gbm recover` | Confirm rollback of an interrupted restoration. |
+| `gbm recover --yes` | Roll back an interrupted restoration without prompting. |
+| `gbm --help` | List commands. |
+| `gbm <command> --help` | Show a command's arguments and options. |
+
+Square brackets above indicate an optional argument; do not type the brackets. History options can be combined, for example `gbm history src/app.py --all --limit 50`.
 
 ## Use
 
 Open a terminal in the project to protect:
 
 ```powershell
-
 gbm watch                 # Initial checkpoint; detached background process
-
 gbm status                # Process liveness + recent heartbeat
-
 gbm undo main.py          # Previous distinct recorded file version
-
 gbm undo main.py --minutes N # Jump to the last checkpoint at/before N minutes ago
-
 gbm redo main.py          # Reapply file undo; supports multiple levels
-
 gbm undo                  # Preview affected count and confirm project undo
-
 gbm redo                  # Reverse project undo (asks for confirmation)
-
 gbm redo --yes            # Reverse project undo without confirmation
-
 gbm undo --yes            # Project undo without interactive confirmation
-
 gbm stop                  # Capture current state, stop monitoring
-
 gbm recover               # Roll back an interrupted restore
-
 ```
 
 `watch` returns after the background process starts. It runs as your user, without a visible console window on Windows. It is not an operating-system service and does not restart at login. Run `watch` again after reboot or a watcher failure. Errors are written to `.gbm/watcher.log`.
@@ -58,7 +79,7 @@ Example: start watching with `main.py` containing `print(1)`, save `print(2)`, w
 
 The default scan interval is 0.5 seconds with two seconds of inactivity before a checkpoint. Files are read and hashed on each scan, so this release is intended for small to medium source trees. Rapid intermediate versions between scans are not guaranteed to be captured. Changes that never settle are saved when `stop` is called or a restore is requested.
 
-Recovery captures pending changes first. File undo walks the distinct versions for that file; redo follows its undo stack. A new checkpointed edit to a file clears that file's redo stack. Unrelated edits retain it. Project undo walks backward through automatic project checkpoints, resets file redo stacks, and restores the whole monitored manifest. `gbm redo` reverses the last project undo; repeated undo/redo operations are supported. New recorded edits, file-specific restorations, or interruption recovery invalidate project redo. File restores do not advance the automatic project checkpoint sequence. Safety checkpoints preserve the state before every restoration and are excluded from ordinary undo navigation. Project redo reverses a project undo; a general safety-checkpoint browser is not included.
+Recovery captures pending changes first. File undo walks the distinct versions for that file; redo follows its undo stack. A new checkpointed edit to a file clears that file's redo stack. Unrelated edits retain it. Project undo walks backward through automatic project checkpoints, resets file redo stacks, and restores the whole monitored manifest. `gbm redo` reverses the last project undo; repeated undo/redo operations are supported. New recorded edits, file-specific restorations, or interruption recovery invalidate project redo. File restores do not advance the automatic project checkpoint sequence. Safety checkpoints preserve the state before every restoration and are excluded from ordinary undo navigation. Project redo reverses a project undo; safety snapshots can be inspected with `gbm history --all`.
 
 Restore plans compare the current manifest immediately before application. A mismatch aborts before project writes. GBM serializes its own operations with an OS file lock, checks object hashes, writes each file with atomic replacement, verifies the final manifest, and keeps a durable pending-operation journal. A failed or interrupted restore blocks further checkpointing/restores until `gbm recover` rolls back to its pre-restore state. Recovery first preserves the currently visible contents as another safety checkpoint. A multi-file restore is not a filesystem-wide atomic transaction. External editors do not honor GBM's lock: avoid saving files during restoration; races during the write phase can still occur.
 
@@ -75,11 +96,8 @@ Only file bytes and existence are versioned. Permissions, timestamps, alternate 
 ## Validate and publish
 
 ```powershell
-
 python -m unittest discover -s tests -v
-
 python -m pip wheel . --no-deps --wheel-dir dist
-
 ```
 
 Tests cover file/project history, repeated undo/redo, additions/deletions, preservation of pending edits, conflicts, object corruption, interruption recovery, exclusions, deduplication, and a real detached Windows watcher lifecycle.
