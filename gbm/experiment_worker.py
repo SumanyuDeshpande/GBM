@@ -9,22 +9,38 @@ import time
 import traceback
 
 
+def configure_limits(timeout, platform=None, resource_module=None):
+    platform = platform or sys.platform
+    if os.name == 'nt' and resource_module is None:
+        return  # Parent applies Windows Job limits before opening the gate.
+    if resource_module is None:
+        import resource as resource_module
+    resource = resource_module
+    def limit(kind, soft, hard):
+        _, inherited_hard = resource.getrlimit(kind)
+        if inherited_hard != resource.RLIM_INFINITY:
+            hard = min(hard, inherited_hard)
+        resource.setrlimit(kind, (min(soft, hard), hard))
+    # Darwin's data-segment limit is not a portable cap on Python's total memory.
+    # Do not lower it during interpreter startup; disclose the lack of a memory cap.
+    if platform != 'darwin':
+        limit(resource.RLIMIT_AS, 256*1024*1024, 256*1024*1024)
+    limit(resource.RLIMIT_FSIZE, 1024*1024, 1024*1024)
+    limit(resource.RLIMIT_CPU, int(timeout)+1, int(timeout)+2)
+
+
 def main():
     request_path, result_path, gate_path = map(Path, sys.argv[1:4])
     while not gate_path.exists():
         time.sleep(.01)
     request = json.loads(request_path.read_text(encoding='utf-8'))
     root = Path(request['workspace'])
-    os.chdir(root)
-    sys.path[:0] = [str(root), str(root/'src')]
-    if os.name != 'nt':
-        import resource
-        memory_limit = resource.RLIMIT_DATA if sys.platform == 'darwin' else resource.RLIMIT_AS
-        resource.setrlimit(memory_limit, (256*1024*1024, 256*1024*1024))
-        resource.setrlimit(resource.RLIMIT_FSIZE, (1024*1024, 1024*1024))
-        resource.setrlimit(resource.RLIMIT_CPU, (int(request['timeout'])+1, int(request['timeout'])+2))
-    phase = 'import'
+    phase = 'setup'
     try:
+        os.chdir(root)
+        sys.path[:0] = [str(root), str(root/'src')]
+        configure_limits(request['timeout'])
+        phase = 'import'
         module = importlib.import_module(request['module'])
         function = getattr(module, request['function'])
         phase = 'call'
@@ -35,7 +51,7 @@ def main():
             result = {'status': 'COMPLETED', 'message': 'Returned without exception; correctness is not verified.',
                       'returned': repr(value)[:2000]}
     except BaseException as error:
-        if phase == 'import':
+        if phase in ('setup', 'import'):
             status = 'INCONCLUSIVE'
         elif isinstance(error, (ValueError, TypeError)):
             status = 'REJECTED_INPUT'

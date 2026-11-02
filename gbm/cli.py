@@ -82,7 +82,8 @@ def main(argv=None):
                 else:
                     plan = experiments.build_plan(project, args.target, args.cases, args.timeout, args.budget)
             print(f"[GBM] Python experiment: {len(plan['probes'])} probes, {plan['selected_functions']} selected functions, {len(plan['skipped'])} skipped entries.")
-            print(f"[GBM] Limits: {plan['timeout']:g}s/case, {plan['budget']:g}s execution budget, 256 MiB/process; isolated stdlib-only environment.")
+            memory = 'no enforced memory cap on macOS' if sys.platform == 'darwin' else '256 MiB/process memory cap'
+            print(f"[GBM] Limits: {plan['timeout']:g}s/case, {plan['budget']:g}s execution budget, {memory}; isolated stdlib-only environment.")
             for index, probe in enumerate(plan['probes'], 1):
                 values = repr(probe['inputs'])
                 if len(values) > 160: values = values[:157] + '...'

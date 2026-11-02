@@ -183,9 +183,11 @@ def case_run(project, folder, interpreter, plan, probe, index, timeout, require_
     temp=work/'.temp'; temp.mkdir(exist_ok=True)
     env.update(TEMP=str(temp),TMP=str(temp),HOME=str(work),USERPROFILE=str(work),PATH=os.defpath)
     options={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {'start_new_session':True}
-    process=subprocess.Popen([str(interpreter),'-I',str(Path(__file__).with_name('experiment_worker.py')),
-                              str(request),str(output),str(gate)],cwd=work,env=env,
-                             stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**options)
+    diagnostics=folder/'worker-stderr.log'
+    with diagnostics.open('wb') as errors:
+        process=subprocess.Popen([str(interpreter),'-I',str(Path(__file__).with_name('experiment_worker.py')),
+                                  str(request),str(output),str(gate)],cwd=work,env=env,
+                                 stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=errors,**options)
     tree=None; started=time.monotonic()
     try:
         tree=ProcessTree(process)
@@ -193,6 +195,8 @@ def case_run(project, folder, interpreter, plan, probe, index, timeout, require_
         deadline=time.monotonic()+timeout
         while process.poll() is None:
             require_active()
+            if diagnostics.stat().st_size>65536:
+                return dict(probe,status='CRASH',message='Worker stderr exceeded 64 KiB.',duration=time.monotonic()-started)
             remaining=deadline-time.monotonic()
             if remaining<=0:
                 return dict(probe,status='TIMEOUT',message=f'Exceeded {timeout:g} seconds.',duration=time.monotonic()-started)
@@ -201,7 +205,11 @@ def case_run(project, folder, interpreter, plan, probe, index, timeout, require_
         if output.exists() and output.stat().st_size<=32768:
             result=json.loads(output.read_text(encoding='utf-8'))
         else:
-            result={'status':'CRASH','message':f'Worker exited without a result (exit {process.returncode}); possible resource limit or process exit.'}
+            with diagnostics.open('rb') as errors:
+                errors.seek(max(0, diagnostics.stat().st_size-8192))
+                diagnostic=errors.read(8192).decode('utf-8',errors='replace')
+            result={'status':'CRASH','message':f'Worker exited without a result (exit {process.returncode}).',
+                    'stderr':diagnostic}
         return dict(probe,**result,duration=time.monotonic()-started)
     finally:
         if tree: tree.close()
@@ -231,7 +239,7 @@ def execute(project, plan, require_active):
     save(folder/'report.json',report)
     try:
         environment=folder/'environment'
-        venv.EnvBuilder(with_pip=False).create(environment)
+        venv.EnvBuilder(with_pip=False, symlinks=os.name != 'nt').create(environment)
         interpreter=environment/('Scripts/python.exe' if os.name=='nt' else 'bin/python')
         deadline=time.monotonic()+plan['budget']
         for index,probe in enumerate(plan['probes']):

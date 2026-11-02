@@ -107,3 +107,41 @@ class ExperimentTests(unittest.TestCase):
         self.write('sample.py','import os\ndef quit_now(x):\n os._exit(3)\n')
         report=self.execute(experiments.build_plan(self.p,cases=1,timeout=3))
         self.assertEqual(report['results'][0]['status'],'CRASH')
+
+    def test_macos_limits_do_not_lower_data_segment(self):
+        from types import SimpleNamespace
+        from gbm.experiment_worker import configure_limits
+        calls=[]
+        fake=SimpleNamespace(RLIM_INFINITY=-1,RLIMIT_AS=1,RLIMIT_FSIZE=2,RLIMIT_CPU=3,
+                             getrlimit=lambda kind: (-1,-1),setrlimit=lambda kind,limits: calls.append((kind,limits)))
+        configure_limits(2,platform='darwin',resource_module=fake)
+        self.assertEqual([kind for kind,_ in calls],[2,3])
+        self.assertEqual(calls[-1][1],(3,4))
+
+    def test_inherited_resource_limits_are_never_raised(self):
+        from types import SimpleNamespace
+        from gbm.experiment_worker import configure_limits
+        calls=[]
+        fake=SimpleNamespace(RLIM_INFINITY=-1,RLIMIT_AS=1,RLIMIT_FSIZE=2,RLIMIT_CPU=3,
+                             getrlimit=lambda kind: (1,2),setrlimit=lambda kind,limits: calls.append(limits))
+        configure_limits(10,platform='linux',resource_module=fake)
+        self.assertTrue(all(soft<=hard<=2 for soft,hard in calls))
+
+    def test_worker_setup_failure_is_reported(self):
+        import sys
+        from gbm import experiment_worker
+        request=self.root/'request.json'; result=self.root/'result.json'; gate=self.root/'gate'
+        request.write_text(json.dumps({'workspace':str(self.root),'timeout':2}),encoding='utf-8')
+        gate.write_text('go')
+        with patch.object(sys,'argv',['worker',str(request),str(result),str(gate)]), patch.object(sys,'path',list(sys.path)), patch('gbm.experiment_worker.os.chdir'), patch('gbm.experiment_worker.configure_limits',side_effect=OSError('unsupported limit')):
+            experiment_worker.main()
+        data=json.loads(result.read_text())
+        self.assertEqual(data['status'],'INCONCLUSIVE')
+        self.assertEqual(data['phase'],'setup')
+        self.assertIn('unsupported limit',data['message'])
+
+    def test_crash_stderr_is_retained(self):
+        self.write('sample.py',"import os,sys\ndef quit_now(x):\n sys.stderr.write('diagnostic before exit\\n'); sys.stderr.flush(); os._exit(3)\n")
+        report=self.execute(experiments.build_plan(self.p,cases=1,timeout=3))
+        self.assertEqual(report['results'][0]['status'],'CRASH')
+        self.assertIn('diagnostic before exit',report['results'][0]['stderr'])
