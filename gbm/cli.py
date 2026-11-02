@@ -46,6 +46,14 @@ def main(argv=None):
     recover.add_argument('-y', '--yes', action='store_true')
     session = commands.add_parser('session', help='Start, end, inspect, or recover an experiment session')
     session.add_argument('action', choices=['start', 'end', 'status', 'recover'])
+    experiment = commands.add_parser('experiment', help='Review and run bounded Python edge-case probes')
+    experiment.add_argument('target', nargs='?', help='Optional file.py[:function], or replay')
+    experiment.add_argument('experiment_id', nargs='?', help='Experiment ID when using replay')
+    experiment.add_argument('--cases', type=int, default=20, help='Maximum generated probes, 1..100')
+    experiment.add_argument('--timeout', type=float, default=2.0, help='Per-case timeout in seconds, 0.1..30')
+    experiment.add_argument('--budget', type=float, default=30.0, help='Total execution budget in seconds, 1..300 (excludes environment setup)')
+    experiment.add_argument('--plan', action='store_true', help='Inspect and display probes without executing project code')
+    experiment.add_argument('-y', '--yes', action='store_true', help='Approve executing the displayed probes without prompting')
     internal = commands.add_parser('_watch', help=argparse.SUPPRESS)
     internal.add_argument('root')
     internal.add_argument('token')
@@ -64,6 +72,44 @@ def main(argv=None):
                 print('[GBM] Watcher: INACTIVE. No history initialized.')
                 return 0
             raise GBMError('No GBM history exists. Run gbm watch first.')
+        if args.command == 'experiment':
+            from . import experiments
+            if args.experiment_id and args.target != 'replay':
+                raise GBMError('Use gbm experiment replay <experiment-id>.')
+            with command_lock(project, args.command):
+                if args.target == 'replay':
+                    plan = experiments.load_plan(project, args.experiment_id)
+                else:
+                    plan = experiments.build_plan(project, args.target, args.cases, args.timeout, args.budget)
+            print(f"[GBM] Python experiment: {len(plan['probes'])} probes, {plan['selected_functions']} selected functions, {len(plan['skipped'])} skipped entries.")
+            print(f"[GBM] Limits: {plan['timeout']:g}s/case, {plan['budget']:g}s execution budget, 256 MiB/process; isolated stdlib-only environment.")
+            for index, probe in enumerate(plan['probes'], 1):
+                values = repr(probe['inputs'])
+                if len(values) > 160: values = values[:157] + '...'
+                print(f"  {index}. {probe['file']}:{probe['function']} [{probe['label']}] {values}")
+            for skipped in plan['skipped'][:5]:
+                print(f"[GBM] Skipped {skipped['file']}: {skipped['reason']}")
+            print('[GBM] These are generated probes, not verified correctness tests. Imports execute project code.')
+            print('[GBM] Runs use a disposable copy, not a security sandbox: absolute paths, network, or external services remain accessible.')
+            if args.plan:
+                print('[GBM] Plan only. No project code executed.')
+                return 0
+            if not args.yes and input('Run these probes in a disposable copy? [y/N]: ').strip().lower() != 'y':
+                print('[GBM] Cancelled. No project code executed.')
+                return 0
+            with command_lock(project, args.command):
+                if args.target != 'replay' and project.scan() != plan['manifest']:
+                    raise GBMError('Project changed after experiment preview. Run the command again.')
+            report, report_path = experiments.execute(project, plan, lambda: require_active(project))
+            print(f"[GBM] Experiment ID: {report['id']}")
+            print('[GBM] Results: ' + ', '.join(f'{key}={value}' for key, value in sorted(report['summary'].items())))
+            for result in report['results']:
+                if result['status'] in ('FINDING', 'TIMEOUT', 'CRASH', 'INCONCLUSIVE'):
+                    message = result.get('message', '')[:200]
+                    print(f"[GBM] {result['status']}: {result['file']}:{result['function']} [{result['label']}] {message}")
+            print(f'[GBM] Report: {report_path}')
+            print(f"[GBM] Replay: gbm experiment replay {report['id']}")
+            return 0
         if args.command == 'history':
             from .history import history
             rel = project.file_arg(args.file) if args.file else None

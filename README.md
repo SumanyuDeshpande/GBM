@@ -44,6 +44,9 @@ Run these commands inside your project. First run `gbm watch`: every project com
 | `gbm history [<file>] --all` | Include safety snapshots in project or file history. |
 | `gbm recover` | Confirm rollback of an interrupted restoration. |
 | `gbm recover --yes` | Roll back an interrupted restoration without prompting. |
+| `gbm experiment [file.py[:function]]` | Review and run generated Python edge-case probes. |
+| `gbm experiment --plan` | Inspect the probe plan without executing project code. |
+| `gbm experiment replay <id>` | Rerun a saved experiment against its recorded source snapshot. |
 | `gbm --help` | List commands. |
 | `gbm <command> --help` | Show a command's arguments and options. |
 
@@ -155,3 +158,28 @@ Run `gbm watch` before using undo, redo, history, recovery, or any session comma
 `gbm watch`, `gbm status`, and help remain available while inactive. Repeating `gbm stop` while already inactive also reports the inactive error. Activation is checked against the real watcher process and its recent heartbeat, not just the presence of `.gbm`. Commands recheck activation under the project lock, including after interactive confirmation: stopping in another terminal cancels a pending restoration before it writes files.
 
 Stopping preserves recorded history and any active session. Restart with `gbm watch` to use them again; a session's starting point does not move. Changes made while monitoring is stopped are not recorded automatically, but restarting captures the current saved state. If an interrupted restoration exists, `gbm watch` starts the watcher with checkpointing paused so you can run `gbm recover`; checkpointing resumes once recovery completes.
+
+## Version 1.6 — Python experiments (initial release)
+
+Run `gbm watch` first. Then:
+
+```console
+gbm experiment --plan
+gbm experiment
+gbm experiment src/math_utils.py:divide --cases 12 --timeout 2 --budget 30
+gbm experiment replay <experiment-id>
+```
+
+GBM statically inspects monitored Python files without importing them, identifies supported top-level functions, and generates deterministic edge inputs. Annotations and literal defaults guide numeric boundaries, empty collections, malformed values, Unicode, nulls, and bounded larger inputs. The first five eligible functions are selected, with probes distributed across them. Target a file or `file.py:function` to narrow the selection. Async functions, decorated functions, positional-only or variadic functions, functions with more than four parameters, classes, and external service/API interfaces require specialized harnesses and are not covered automatically. Unsupported source files/functions are reported. No AI model, account, or network service is required to generate tests.
+
+The plan lists the exact functions and inputs (long values are abbreviated for display), then asks before execution. `--plan` stops before execution; `--yes` explicitly approves execution without prompting. Each probe gets a fresh monitored-file copy and a separate Python process using a stdlib-only virtual environment. Runtime dependencies are not installed automatically: missing dependencies/import failures are INCONCLUSIVE. Installed project plugins, package entry points, complex package layouts, and non-Python code are not automatically tested. This first release does not run existing test suites or infer business requirements.
+
+Limits: `--cases` 1..100 (default 20); `--timeout` 0.1..30 seconds per probe (default 2); `--budget` 1..300 seconds for the execution loop (default 30, excluding environment setup); at most 500 monitored files and 20 MiB of copied contents. Process memory is capped at 256 MiB on Windows/Linux (data-segment limit on macOS); Windows limits the process tree to four concurrent processes, and POSIX workers also receive CPU and output-file limits. Timeout/stop cleanup terminates the Windows Job or POSIX process group. These limits are guardrails, not a guarantee against hostile code escaping, spawning detached processes on POSIX, filling disk on Windows, or using external services.
+
+**A disposable copy is not a security sandbox.** Importing and calling project code can still access absolute paths, the network, databases, and other resources available to your user. Review the plan and run only code you trust. Common credential environment variables are not inherited, but this is not a credential-isolation boundary. Relative project-file writes normally land in the disposable copy; direct access to the original project remains possible. For adversarial/untrusted programs, use a separately secured container or virtual machine instead.
+
+Results distinguish COMPLETED (returned, correctness unverified), REJECTED_INPUT (TypeError/ValueError, not automatically a bug), FINDING (other call exceptions requiring review), INCONCLUSIVE (import/harness failure), TIMEOUT, CRASH, and NOT_RUN (budget exhausted). No output oracle is inferred, so GBM cannot prove correctness or identify a wrong returned answer automatically. Results are probes rather than verified unit tests or meaningful performance benchmarks. Exit status zero means the experiment finished; consult the report for findings.
+
+Plans and JSON reports are saved under `.gbm/experiments/<id>/`. Reports include the inputs, statuses, durations, exception tracebacks, interpreter version, and platform. Source manifests refer to the existing content-addressed history objects. `replay` runs the original source and inputs in a new disposable workspace and creates a new report; environment/version differences can affect reproducibility. The original history objects must remain available. Runtime workspaces/environments are removed on normal completion or cancellation where possible; report files remain. If GBM itself is forcibly terminated, runtime directories and a RUNNING report may remain for manual inspection. Experiment IDs and paths are printed after completion; cancelled runs retain their report beneath `.gbm/experiments`.
+
+An active watcher is checked before planning, after confirmation, between cases, and during worker execution. `gbm stop` or a lost watcher cancels remaining work and terminates the current worker. Reports can contain sensitive returned values or errors; review them before sharing.

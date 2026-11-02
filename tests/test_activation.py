@@ -37,7 +37,7 @@ class ActivationTests(unittest.TestCase):
     def test_all_project_commands_blocked_before_watch_and_after_stop(self):
         commands=[['history'],['history','a'],['undo'],['undo','a'],['redo'],['redo','a'],
                   ['session','start'],['session','end'],['session','status'],['session','recover'],
-                  ['recover','--yes'],['stop']]
+                  ['recover','--yes'],['stop'],['experiment'],['experiment','--plan']]
         for args in commands:
             with self.subTest(phase='before',args=args): self.assert_blocked(*args)
         self.assertEqual(self.cli('status').returncode,0)
