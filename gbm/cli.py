@@ -1,5 +1,6 @@
 """Command line entry point."""
 import argparse
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import subprocess
@@ -9,6 +10,20 @@ import uuid
 from . import __version__
 from .core import Project, GBMError
 from .watcher import active, run
+
+
+def require_active(project):
+    if not (project.home / 'history.db').exists() or not active(project):
+        raise GBMError("Monitoring is inactive. Run 'gbm watch' in this project before using this command.")
+
+
+@contextmanager
+def command_lock(project, command):
+    with project.lock():
+        if command not in ('watch', 'status'):
+            require_active(project)
+        yield
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='gbm', description='Automatic local project checkpoints and recovery')
@@ -42,8 +57,8 @@ def main(argv=None):
             run(Project(args.root), args.token)
             return 0
         project = Project.discover()
-        if args.command == 'session' and args.action == 'start':
-            project.initialize()
+        if args.command not in ('watch', 'status'):
+            require_active(project)
         if args.command != 'watch' and not (project.home / 'history.db').exists():
             if args.command == 'status':
                 print('[GBM] Watcher: INACTIVE. No history initialized.')
@@ -52,7 +67,8 @@ def main(argv=None):
         if args.command == 'history':
             from .history import history
             rel = project.file_arg(args.file) if args.file else None
-            entries = history(project, rel, args.limit, args.all)
+            with command_lock(project, args.command):
+                entries = history(project, rel, args.limit, args.all)
             print(f"[GBM] History: {rel or project.root}")
             if not entries:
                 print('[GBM] No recorded history for this file.' if rel else '[GBM] No checkpoints recorded.')
@@ -67,18 +83,18 @@ def main(argv=None):
         if args.command == 'session':
             from . import sessions
             if args.action == 'start':
-                with project.lock():
+                with command_lock(project, args.command):
                     if active(project) and project.get('watcher', {}).get('version') != __version__:
                         raise GBMError('Restart the older watcher with gbm stop and gbm watch before starting a session.')
                     sessions.start(project)
                 print('[GBM] Session started. Monitored files and folders recorded.')
                 return 0
             if args.action == 'status':
-                with project.lock():
+                with command_lock(project, args.command):
                     state = project.get('session')
                 print(f"[GBM] Session: {'ACTIVE since ' + time.ctime(state['started']) if state else 'INACTIVE'}")
                 return 0
-            with project.lock():
+            with command_lock(project, args.command):
                 plan = sessions.preview(project, recover=args.action == 'recover')
             before, target = plan['before'], plan['target']
             affected = sum(before['files'].get(p) != target['files'].get(p)
@@ -98,7 +114,7 @@ def main(argv=None):
                         break
                     print('[GBM] Enter y to keep or n to discard. Ctrl+C cancels.')
                 keep = answer == 'y'
-            with project.lock():
+            with command_lock(project, args.command):
                 sessions.finish(project, plan, keep)
             print('[GBM] Changes kept. Session ended.' if keep else
                   '[GBM] Discarded experiment recovered.' if args.action == 'recover' else
@@ -106,11 +122,12 @@ def main(argv=None):
             return 0
         if args.command == 'watch':
             project.initialize()
-            with project.lock():
+            with command_lock(project, args.command):
                 if active(project):
                     print('[GBM] Already watching this project.')
                     return 0
-                project.capture()
+                if not project.pending():
+                    project.capture()
                 token = uuid.uuid4().hex
                 project.set('watcher', {'token': token, 'running': True, 'heartbeat': 0})
                 env = os.environ.copy()
@@ -124,11 +141,13 @@ def main(argv=None):
             for _ in range(50):
                 if active(project):
                     print(f'[GBM] Watching {project.root}. Automatic checkpointing enabled.')
+                    if project.pending():
+                        print('[GBM] Interrupted restore detected. Checkpointing is paused; run gbm recover.')
                     return 0
                 time.sleep(.1)
             raise GBMError('Watcher did not start. See .gbm/watcher.log.')
         if args.command == 'status':
-            with project.lock():
+            with command_lock(project, args.command):
                 with project.db() as db:
                     count, latest = db.execute('SELECT COUNT(*),MAX(created) FROM checkpoints').fetchone()
                 print(f'Project: {project.root}\nWatcher: {"ACTIVE" if active(project) else "INACTIVE"}')
@@ -137,7 +156,7 @@ def main(argv=None):
                     print('ATTENTION: Interrupted restoration. Run gbm recover.')
             return 0
         if args.command == 'stop':
-            with project.lock():
+            with command_lock(project, args.command):
                 status = project.get('watcher', {})
                 status['running'] = False
                 project.set('watcher', status)
@@ -148,12 +167,12 @@ def main(argv=None):
         if args.command == 'recover':
             if not args.yes and input('Roll back interrupted restoration? [y/N]: ').lower() != 'y':
                 return 0
-            with project.lock():
+            with command_lock(project, args.command):
                 project.recover()
             print('[GBM] Pre-restore state recovered. Any interrupted session remains active.')
             return 0
         rel = project.file_arg(args.file) if args.file else None
-        with project.lock():
+        with command_lock(project, args.command):
             before, target, action = project.preview(rel, args.command == 'redo', getattr(args, 'minutes', None))
         affected = sum(before.get(p) != target.get(p) for p in set(before) | set(target))
         if 'checkpoint' in action:
@@ -164,7 +183,7 @@ def main(argv=None):
             return 0
         if not rel and not args.yes and input('Restore project? [y/N]: ').lower() != 'y':
             return 0
-        with project.lock():
+        with command_lock(project, args.command):
             project.apply(before, target, action)
         print('[GBM] Restored successfully.')
         return 0

@@ -20,7 +20,7 @@ For development, run `python -m pip install .` from the source checkout. If the 
 
 ## Command reference
 
-Run these commands inside your project. `<file>` means any monitored file path, not just `main.py`; quote paths containing spaces. Replace placeholders such as `<file>` and `N` with actual values.
+Run these commands inside your project. First run `gbm watch`: every project command requires an active watcher, except `gbm watch`, `gbm status`, and help. After `gbm stop`, commands return an inactive-monitoring error with a suggestion to run `gbm watch` again. `<file>` means any monitored file path, not just `main.py`; quote paths containing spaces. Replace placeholders such as `<file>` and `N` with actual values.
 
 | Command | Purpose |
 | --- | --- |
@@ -116,13 +116,14 @@ Run `gbm redo` to restore the monitored project state preserved by the last succ
 ## Version 1.3 — experiment sessions
 
 ```powershell
+gbm watch
 gbm session start
 # Edit, create, rename, or delete monitored files and folders; save your changes.
 gbm session end
 # Would you like to maintain the changes you made in the session? [y/n]:
 ```
 
-Choose `y` to keep your current work and close the session. Choose `n` to restore the monitored files and folders to their starting state, preserving any uncommitted work that already existed when you started. Sessions also track empty folders and file/folder type changes. Only one session may be active per project. `gbm session status` shows whether one is active. The starting snapshot persists across terminal closures and computer restarts; ordinary checkpoints never move it. Monitoring is optional: session start and end capture the required states themselves. Use `gbm watch` for intermediate automatic checkpoints.
+Choose `y` to keep your current work and close the session. Choose `n` to restore the monitored files and folders to their starting state, preserving any uncommitted work that already existed when you started. Sessions also track empty folders and file/folder type changes. Only one session may be active per project. `gbm session status` shows whether one is active. The starting snapshot persists across terminal closures and computer restarts; ordinary checkpoints never move it. An active watcher is required: run `gbm watch` before starting or ending a session. Session start and end still capture their own precise boundary states.
 
 Before discarding, GBM shows the number of changed files and folders. Invalid answers prompt again; Ctrl+C or EOF cancels and leaves the session active. Changes made while the question is open cause a conflict and require retrying the command. Save editor buffers before ending a session and avoid editing during restoration. A discarded experiment is retained as the latest session backup, including empty folders. Run `gbm session recover`, review the summary, and confirm to restore it. End any active session first. A later discard replaces that backup; successfully recovering it consumes the backup.
 
@@ -142,3 +143,15 @@ gbm history --all                 # Include pre-restore safety snapshots
 History shows checkpoint IDs, local timestamps with UTC offsets, checkpoint kinds, and newest entries first. Project rows summarize additions (`+`), modifications (`~`), deletions (`-`), and total recorded file count relative to the previous automatic checkpoint. File rows show ADDED, MODIFIED, or DELETED with a short content hash. Repeated identical file contents in consecutive automatic checkpoints are omitted; delete/recreate transitions remain visible. Deleted files can be queried by their original path. An unrecorded file produces a meaningful empty-history message.
 
 `--all` includes safety snapshots, explicitly labeled SNAPSHOT or ABSENT, without changing the comparison between automatic checkpoints. `*` marks the project's undo-navigation checkpoint, not the current on-disk state or a file's independent undo position. History includes recorded checkpoints on earlier development paths after undo; it is not a list of every undo/redo operation. Browsing never checkpoints current edits, restores files, or clears redo. Pending saved edits appear only after capture. Ordinary checkpoint history tracks files; session empty-folder state is stored separately. Selecting a checkpoint for restoration is not part of this release.
+
+## Version 1.5 — watch activates project commands
+
+Run `gbm watch` before using undo, redo, history, recovery, or any session command. `gbm stop` records the current eligible state and disables project commands. Calling a project command before watch, after stop, or after a watcher failure returns a nonzero exit status and:
+
+```text
+[GBM] Monitoring is inactive. Run 'gbm watch' in this project before using this command.
+```
+
+`gbm watch`, `gbm status`, and help remain available while inactive. Repeating `gbm stop` while already inactive also reports the inactive error. Activation is checked against the real watcher process and its recent heartbeat, not just the presence of `.gbm`. Commands recheck activation under the project lock, including after interactive confirmation: stopping in another terminal cancels a pending restoration before it writes files.
+
+Stopping preserves recorded history and any active session. Restart with `gbm watch` to use them again; a session's starting point does not move. Changes made while monitoring is stopped are not recorded automatically, but restarting captures the current saved state. If an interrupted restoration exists, `gbm watch` starts the watcher with checkpointing paused so you can run `gbm recover`; checkpointing resumes once recovery completes.

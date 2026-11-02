@@ -67,8 +67,16 @@ class BrowseTests(unittest.TestCase):
     def test_cli_deleted_file_and_help(self):
         self.write('a','one'); self.capture(); (self.root/'a').unlink(); self.capture()
         env=os.environ.copy(); env['PYTHONPATH']=str(Path(__file__).resolve().parents[1])
-        result=subprocess.run([sys.executable,'-m','gbm','history','a','--limit','1'],cwd=self.root,
-                              env=env,text=True,capture_output=True,timeout=15)
-        self.assertEqual(result.returncode,0,result.stderr)
-        self.assertIn('DELETED',result.stdout)
-        self.assertNotIn('ADDED',result.stdout)
+        import time
+        def cli(*args):
+            return subprocess.run([sys.executable,'-m','gbm',*args],cwd=self.root,
+                                  env=env,text=True,capture_output=True,timeout=15)
+        try:
+            started=cli('watch')
+            self.assertEqual(started.returncode,0,started.stderr)
+            result=cli('history','a','--limit','1')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('DELETED',result.stdout)
+            self.assertNotIn('ADDED',result.stdout)
+        finally:
+            cli('stop'); time.sleep(1)

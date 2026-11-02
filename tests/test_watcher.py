@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from gbm.core import Project
+from gbm.watcher import active
 
 class WatcherTests(unittest.TestCase):
     def test_detached_watch_checkpoint_restore_stop(self):
@@ -45,5 +46,6 @@ class WatcherTests(unittest.TestCase):
                     self.assertEqual(count,db.execute("SELECT COUNT(*) FROM checkpoints WHERE kind='automatic'").fetchone()[0])
                 cli('stop'); self.assertIn('INACTIVE',cli('status'))
             finally:
-                cli('stop')
+                if active(Project(root)):
+                    cli('stop')
                 time.sleep(1)

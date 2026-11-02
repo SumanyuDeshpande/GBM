@@ -107,21 +107,26 @@ class SessionTests(unittest.TestCase):
         def cli(*args,input=None):
             return subprocess.run([sys.executable,'-m','gbm',*args],cwd=self.root,env=env,
                                   input=input,text=True,capture_output=True,timeout=15)
-        self.write('a','one')
-        self.assertEqual(cli('session','start').returncode,0)
-        self.write('a','two')
-        cancelled=cli('session','end',input='')
-        self.assertEqual(cancelled.returncode,130)
-        self.assertIsNotNone(self.p.get('session'))
-        result=cli('session','end',input='bad\nn\n')
-        self.assertEqual(result.returncode,0,result.stderr)
-        self.assertIn('Would you like to maintain',result.stdout)
-        self.assertEqual((self.root/'a').read_text(),'one')
-        self.assertEqual(cli('session','start').returncode,0)
-        self.write('a','kept')
-        result=cli('session','end',input='y\n')
-        self.assertEqual(result.returncode,0,result.stderr)
-        self.assertEqual((self.root/'a').read_text(),'kept')
+        import time
+        self.assertEqual(cli('watch').returncode,0)
+        try:
+            self.write('a','one')
+            self.assertEqual(cli('session','start').returncode,0)
+            self.write('a','two')
+            cancelled=cli('session','end',input='')
+            self.assertEqual(cancelled.returncode,130)
+            self.assertIsNotNone(self.p.get('session'))
+            result=cli('session','end',input='bad\nn\n')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('Would you like to maintain',result.stdout)
+            self.assertEqual((self.root/'a').read_text(),'one')
+            self.assertEqual(cli('session','start').returncode,0)
+            self.write('a','kept')
+            result=cli('session','end',input='y\n')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual((self.root/'a').read_text(),'kept')
+        finally:
+            cli('stop'); time.sleep(1)
 
     def test_live_watcher_session_discard(self):
         import time
