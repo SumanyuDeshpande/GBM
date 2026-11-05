@@ -45,6 +45,7 @@ Run these commands inside your project. First run `gbm watch`: every project com
 | `gbm recover` | Confirm rollback of an interrupted restoration. |
 | `gbm recover --yes` | Roll back an interrupted restoration without prompting. |
 | `gbm experiment [file.py[:function]]` | Review and run generated Python edge-case probes. |
+| `gbm experiment --use test.py --for main.py` | Run only supplied function or stdin cases against the selected Python file. |
 | `gbm experiment --plan` | Inspect the probe plan without executing project code. |
 | `gbm experiment replay <id>` | Rerun a saved experiment against its recorded source snapshot. |
 | `gbm --help` | List commands. |
@@ -183,3 +184,53 @@ Results distinguish COMPLETED (returned, correctness unverified), REJECTED_INPUT
 Plans and JSON reports are saved under `.gbm/experiments/<id>/`. Reports include the inputs, statuses, durations, exception tracebacks, interpreter version, and platform. Source manifests refer to the existing content-addressed history objects. `replay` runs the original source and inputs in a new disposable workspace and creates a new report; environment/version differences can affect reproducibility. The original history objects must remain available. Runtime workspaces/environments are removed on normal completion or cancellation where possible; report files remain. If GBM itself is forcibly terminated, runtime directories and a RUNNING report may remain for manual inspection. Experiment IDs and paths are printed after completion; cancelled runs retain their report beneath `.gbm/experiments`.
 
 An active watcher is checked before planning, after confirmation, between cases, and during worker execution. `gbm stop` or a lost watcher cancels remaining work and terminates the current worker. Reports can contain sensitive returned values or errors; review them before sharing.
+
+## Version 1.7 — custom-input experiments
+
+```console
+gbm watch
+gbm experiment --use test.py --for main.py --plan
+gbm experiment --use test.py --for main.py
+```
+
+This mode runs **only the cases you supply**; no baseline, random, or generated cases are added. Both flags are required together and cannot be combined with a positional target, replay, or `--cases`. `--timeout`, `--budget`, `--plan`, and `--yes` still work. All supplied cases (1..100) are included in order; cases beyond the execution budget are explicitly NOT_RUN, not silently dropped.
+
+The `--use` file is a Python data file containing one literal `CASES = [...]` assignment, optional comments, and optional docstrings. GBM parses it without executing it. Imports, function calls, expressions, test functions, and executable statements are rejected. Use JSON-compatible Python literals: dictionaries with string keys, lists, strings, finite numbers, booleans, and `None`. Tuples, sets, and bytes are unsupported. Both files must be distinct, monitored `.py` files inside this project. The case file must be at most 256 KiB.
+
+### Testing functions
+
+If `main.py` defines `def add(a, b): return a + b`, put this in `test.py`:
+
+```python
+CASES = [
+    {"name": "addition", "function": "add", "inputs": {"a": 2, "b": 3}, "expected": 5},
+    {"name": "negative", "function": "add", "args": [-1, 1], "expected": 0},
+]
+```
+
+`inputs` supplies keyword arguments; optional `args` supplies positional arguments. The selected function must be a synchronous top-level function declared in the target file. Its module is imported in the disposable copy, including any top-level code. `expected` compares the returned value using Python equality, including an explicit `None`. Alternatively, `expected_exception` names a built-in exception such as `ValueError`; that exception or a subclass must be raised. Do not specify both. A case without either expectation records the return value or exception without claiming correctness. Async/generator results remain inconclusive.
+
+### Testing scripts that use input()
+
+For this `main.py`:
+
+```python
+a = int(input())
+b = int(input())
+print(a + b)
+```
+
+Use this `test.py`:
+
+```python
+CASES = [
+    {"name": "positive", "stdin": "2\n3\n", "expected_stdout": "5\n"},
+    {"name": "negative", "stdin": "-1\n1\n", "expected_stdout": "0\n"},
+]
+```
+
+A `stdin` key selects script mode. The target runs as `__main__`, with exactly that text supplied to `input()`/standard-input reads. Exhausted input raises EOF instead of waiting for the keyboard. `expected_stdout` compares the entire captured output exactly, including prompts, spaces, and newline characters. If your script calls `input("Number: ")`, include `Number: ` in the expected output. Optional `expected_exit` checks an exit code from 0 to 255. When stdout is checked, a normal exit (0) is required unless another exit code is supplied. If neither expectation is provided, output and exit status are recorded without a PASS claim. Mixed function and stdin cases are supported if the target file supports both execution modes.
+
+Explicit checks produce PASS or FAIL. Import/dependency or harness failures are INCONCLUSIVE; timeouts and crashes retain their existing statuses. Expected exceptions are not added automatically. Output is captured with a 16384-character limit per stream; reports show the first 2000 characters and mark truncation, but comparisons use the full captured text before truncation. The isolated environment remains stdlib-only; dependencies are not installed automatically. Custom-mode exit status is 1 if any case fails, crashes, times out, is inconclusive, or is not run; otherwise it is 0. COMPLETED still means observed, not verified.
+
+The watch requirement, disposable copies, process limits, cancellation, and sandbox limitations from ordinary experiments apply. Each case starts from the same recorded project snapshot. Plans and reports retain supplied inputs and expectations. `gbm experiment replay <id>` preserves custom mode and reruns the recorded source/cases, even if either original file has changed. Runnable function and input-script examples are in `examples/custom_inputs/`.

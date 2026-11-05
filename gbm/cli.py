@@ -49,7 +49,9 @@ def main(argv=None):
     experiment = commands.add_parser('experiment', help='Review and run bounded Python edge-case probes')
     experiment.add_argument('target', nargs='?', help='Optional file.py[:function], or replay')
     experiment.add_argument('experiment_id', nargs='?', help='Experiment ID when using replay')
-    experiment.add_argument('--cases', type=int, default=20, help='Maximum generated probes, 1..100')
+    experiment.add_argument('--use', dest='cases_file', help='Read only the literal CASES supplied in this Python file')
+    experiment.add_argument('--for', dest='target_file', help='Python file to test with --use')
+    experiment.add_argument('--cases', type=int, default=None, help='Maximum generated probes, 1..100')
     experiment.add_argument('--timeout', type=float, default=2.0, help='Per-case timeout in seconds, 0.1..30')
     experiment.add_argument('--budget', type=float, default=30.0, help='Total execution budget in seconds, 1..300 (excludes environment setup)')
     experiment.add_argument('--plan', action='store_true', help='Inspect and display probes without executing project code')
@@ -74,23 +76,38 @@ def main(argv=None):
             raise GBMError('No GBM history exists. Run gbm watch first.')
         if args.command == 'experiment':
             from . import experiments
+            if bool(args.cases_file) != bool(args.target_file):
+                raise GBMError('--use and --for must be provided together.')
+            if args.cases_file and (args.target or args.experiment_id or args.cases is not None):
+                raise GBMError('Custom cases cannot be combined with a positional target, replay, or --cases; all supplied cases are used.')
             if args.experiment_id and args.target != 'replay':
                 raise GBMError('Use gbm experiment replay <experiment-id>.')
             with command_lock(project, args.command):
-                if args.target == 'replay':
+                if args.cases_file:
+                    from .custom_experiments import build_plan
+                    plan = build_plan(project, args.cases_file, args.target_file, args.timeout, args.budget)
+                elif args.target == 'replay':
                     plan = experiments.load_plan(project, args.experiment_id)
                 else:
-                    plan = experiments.build_plan(project, args.target, args.cases, args.timeout, args.budget)
-            print(f"[GBM] Python experiment: {len(plan['probes'])} probes, {plan['selected_functions']} selected functions, {len(plan['skipped'])} skipped entries.")
+                    plan = experiments.build_plan(project, args.target, 20 if args.cases is None else args.cases, args.timeout, args.budget)
+            custom = plan.get('mode') == 'custom'
+            if custom:
+                print(f"[GBM] Custom experiment: {len(plan['probes'])} supplied cases from {plan['cases_file']} against {plan['target_file']}. No additional inputs generated.")
+            else:
+                print(f"[GBM] Python experiment: {len(plan['probes'])} probes, {plan['selected_functions']} selected functions, {len(plan['skipped'])} skipped entries.")
             memory = 'no enforced memory cap on macOS' if sys.platform == 'darwin' else '256 MiB/process memory cap'
             print(f"[GBM] Limits: {plan['timeout']:g}s/case, {plan['budget']:g}s execution budget, {memory}; isolated stdlib-only environment.")
             for index, probe in enumerate(plan['probes'], 1):
-                values = repr(probe['inputs'])
+                supplied = probe.get('stdin', {'args':probe['args'],'inputs':probe['inputs']} if 'args' in probe else probe['inputs'])
+                values = ascii(supplied)
                 if len(values) > 160: values = values[:157] + '...'
                 print(f"  {index}. {probe['file']}:{probe['function']} [{probe['label']}] {values}")
+                if custom:
+                    expectations = {key:probe[key] for key in ('expected','expected_exception','expected_stdout','expected_exit') if key in probe}
+                    print('     Expectations: ' + (ascii(expectations)[:240] if expectations else 'none; output is observed without a correctness assertion'))
             for skipped in plan['skipped'][:5]:
                 print(f"[GBM] Skipped {skipped['file']}: {skipped['reason']}")
-            print('[GBM] These are generated probes, not verified correctness tests. Imports execute project code.')
+            print('[GBM] Supplied expectations determine PASS/FAIL; cases without expectations are observations.' if custom else '[GBM] These are generated probes, not verified correctness tests. Imports execute project code.')
             print('[GBM] Runs use a disposable copy, not a security sandbox: absolute paths, network, or external services remain accessible.')
             if args.plan:
                 print('[GBM] Plan only. No project code executed.')
@@ -105,12 +122,12 @@ def main(argv=None):
             print(f"[GBM] Experiment ID: {report['id']}")
             print('[GBM] Results: ' + ', '.join(f'{key}={value}' for key, value in sorted(report['summary'].items())))
             for result in report['results']:
-                if result['status'] in ('FINDING', 'TIMEOUT', 'CRASH', 'INCONCLUSIVE'):
+                if custom or result['status'] in ('FINDING', 'TIMEOUT', 'CRASH', 'INCONCLUSIVE'):
                     message = result.get('message', '')[:200]
                     print(f"[GBM] {result['status']}: {result['file']}:{result['function']} [{result['label']}] {message}")
             print(f'[GBM] Report: {report_path}')
             print(f"[GBM] Replay: gbm experiment replay {report['id']}")
-            return 0
+            return 1 if custom and any(row['status'] not in ('PASS','COMPLETED') for row in report['results']) else 0
         if args.command == 'history':
             from .history import history
             rel = project.file_arg(args.file) if args.file else None

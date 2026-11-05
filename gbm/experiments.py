@@ -40,13 +40,18 @@ def samples(argument, default):
     return [0,None,'',[],{},-1,'\u6587', [0]*256]
 
 
-def discover(project, target=None):
+def snapshot_manifest(project):
     manifest = project.scan()
     if len(manifest)>MAX_FILES:
         raise GBMError(f'Experiment copy limit is {MAX_FILES} monitored files. Narrow your monitoring scope first.')
     total = sum((project.home/'objects'/digest).stat().st_size for digest in manifest.values())
     if total>MAX_BYTES:
         raise GBMError('Experiment copy limit is 20 MiB. Narrow your monitoring scope first.')
+    return manifest
+
+
+def discover(project, target=None):
+    manifest = snapshot_manifest(project)
     selected_file, selected_function = None, None
     if target:
         file_part, separator, function = target.rpartition(':')
@@ -202,7 +207,7 @@ def case_run(project, folder, interpreter, plan, probe, index, timeout, require_
                 return dict(probe,status='TIMEOUT',message=f'Exceeded {timeout:g} seconds.',duration=time.monotonic()-started)
             try: process.wait(timeout=min(.1,remaining))
             except subprocess.TimeoutExpired: pass
-        if output.exists() and output.stat().st_size<=32768:
+        if output.exists() and output.stat().st_size<=262144:
             result=json.loads(output.read_text(encoding='utf-8'))
         else:
             with diagnostics.open('rb') as errors:
@@ -235,7 +240,10 @@ def execute(project, plan, require_active):
     save(folder/'plan.json',plan)
     report={'id':folder.name,'started':time.time(),'status':'RUNNING','results':[],
             'python':sys.version,'platform':sys.platform,
-            'note':'Generated probes have no correctness oracle. Findings require review; this is not a security sandbox.'}
+            'mode':plan.get('mode','generated'),
+            'note':('Only supplied cases run; PASS/FAIL applies only to explicit expectations. '
+                    if plan.get('mode')=='custom' else 'Generated probes have no correctness oracle. ')
+                   + 'Findings require review; this is not a security sandbox.'}
     save(folder/'report.json',report)
     try:
         environment=folder/'environment'
