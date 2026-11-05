@@ -50,6 +50,8 @@ Run these commands inside your project. First run `gbm watch`: every project com
 | `gbm experiment replay <id>` | Rerun a saved experiment against its recorded source snapshot. |
 | `gbm try "<name>"` | Create a named project copy with a fresh, independent Python environment. |
 | `gbm try "<name>" --path "<parent>"` | Create the workspace under a chosen external parent directory. |
+| `gbm agent --manual --test "<task>"` | Approve each agent tool action, review tests, then choose whether to merge. |
+| `gbm agent --auto --test "<task>"` | Allow bounded workspace actions, then choose whether to merge. |
 | `gbm --help` | List commands. |
 | `gbm <command> --help` | Show a command's arguments and options. |
 
@@ -262,3 +264,31 @@ Workspace copies follow project exclusions. `.git`, the source `.gbm`, `.venv`, 
 Origin, manifest, skipped paths, interpreter version, and setup status are stored at `<workspace>/.gbm/workspace.json`. Pip setup logs are at `.gbm/setup.log`; package installation from this step does not contact PyPI. `gbm stop` in the original project cancels unfinished copying/bootstrap work when next checked. Pip setup is time-limited to 60 seconds and its process group/tree is cleaned up. A failure or cancellation leaves an INCOMPLETE workspace for inspection; GBM does not report success, overwrite it on retry, or recursively delete potentially useful copied files. Choose a new name after inspecting an incomplete attempt. An abrupt process termination can leave a CREATING marker.
 
 This command creates a workspace; automatic merging, workspace deletion/listing, and bringing selected changes back are not implemented. If an experiment succeeds, review differences and copy the desired source/dependency-file changes back manually. Never copy `.venv` back. A workspace and virtual environment isolate normal project-file/package work; they do not isolate databases, network calls, absolute paths, system-wide tools, or other external effects.
+
+## Groq coding agent (1.9.0)
+
+Start monitoring, then set your own Groq key in your local terminal. Never commit the key or paste it into an issue or chat. For Windows Command Prompt:
+
+```bat
+set "GROQ_API_KEY=your-own-key"
+gbm watch
+gbm agent --manual --test "Fix the parser and add tests for empty input"
+```
+
+For PowerShell, use `$env:GROQ_API_KEY = "your-own-key"` instead. Each user supplies their own key. Groq access is subject to the account's available models, quotas and rate limits; GBM does not provide unlimited free inference.
+
+Manual mode asks before every file/tool action, including reads and tests. Auto mode permits the same constrained tools without individual prompts:
+
+```console
+gbm agent --auto --test "Add input validation and test it"
+```
+
+Both modes work in an external project copy with a fresh Python environment. They can read, create, edit and delete eligible files, create folders, remove empty folders, and run unittest or pytest. They have no shell or package-install tool. Existing project dependencies are not automatically installed; unavailable dependencies, missing pytest, or zero collected tests are reported honestly. `--test-runner pytest` selects pytest for the final check; it must already be available in that workspace environment.
+
+The agent sends the task and permitted file contents/tool results to Groq. It excludes common secret files from its file tools and omits the Groq key from test subprocess environments. A project copy is **not a security sandbox**: executing project tests can still have external effects. Review unfamiliar code before running it.
+
+GBM records actual test outcomes, saves a full diff and local JSON report under `.gbm/agents/`, and always asks whether to merge. `y` applies reviewed file/folder changes; `n` discards the workspace and leaves the original project unchanged. A failed test is not presented as a pass and does not silently approve a merge. An existing source session stays active. Conflicting edits to the original project cancel the merge and retain the workspace for review. Interrupted merges can be rolled back with `gbm recover` while monitoring is active.
+
+Default limits are 10 model rounds, 40 tool calls, 300 seconds and 50 changed files/folders per merge. Use `--max-steps` (1–30), `--max-seconds` (30–900), and `--model` to configure a run. An in-flight API request may take up to its timeout before a stopped watcher is noticed. Budget failures and provider errors retain the workspace and report without merging. The default model is `llama-3.3-70b-versatile`; `GROQ_MODEL` also configures it.
+
+Groq reference: [local tool calling](https://console.groq.com/docs/tool-use/local-tool-calling).

@@ -182,6 +182,8 @@ class Project:
             db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', (key, json.dumps(value)))
 
     def pending(self):
+        if self.get('agent_pending'):
+            return [('agent',)]
         if self.get('session_pending'):
             return [('session',)]
         with self.db() as db:
@@ -362,6 +364,10 @@ class Project:
             raise GBMError('Restore verification failed; recovery journal retained.')
 
     def recover(self):
+        if self.get('agent_pending'):
+            from .agent import recover_merge
+            recover_merge(self)
+            return
         if self.get('session_pending'):
             from .sessions import recover_interrupted
             recover_interrupted(self)

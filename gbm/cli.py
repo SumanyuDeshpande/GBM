@@ -59,6 +59,16 @@ def main(argv=None):
     workspace = commands.add_parser('try', help='Create a named project copy with its own fresh Python environment')
     workspace.add_argument('name', help='Workspace name, such as new-auth')
     workspace.add_argument('--path', help='Parent directory for the named workspace (outside the original project)')
+    agent = commands.add_parser('agent', help='Groq coding agent with workspace edits, tests, and a final merge decision')
+    modes = agent.add_mutually_exclusive_group(required=True)
+    modes.add_argument('--manual', action='store_true', help='Approve each tool action')
+    modes.add_argument('--auto', action='store_true', help='Perform bounded tool actions automatically')
+    agent.add_argument('--test', action='store_true', required=True, help='Require final test execution or explicitly report denied/missing tests')
+    agent.add_argument('task', nargs='?', help='Task to perform; prompted if omitted')
+    agent.add_argument('--model', help='Groq model override (otherwise GROQ_MODEL or llama-3.3-70b-versatile)')
+    agent.add_argument('--max-steps', type=int, default=10)
+    agent.add_argument('--max-seconds', type=int, default=300)
+    agent.add_argument('--test-runner', choices=['unittest','pytest'], default='unittest')
     internal = commands.add_parser('_watch', help=argparse.SUPPRESS)
     internal.add_argument('root')
     internal.add_argument('token')
@@ -77,6 +87,27 @@ def main(argv=None):
                 print('[GBM] Watcher: INACTIVE. No history initialized.')
                 return 0
             raise GBMError('No GBM history exists. Run gbm watch first.')
+        if args.command == 'agent':
+            import json
+            from . import agent as coding_agent
+            from .groq_client import GroqClient, DEFAULT_MODEL
+            client = GroqClient(os.environ.get('GROQ_API_KEY'), args.model or os.environ.get('GROQ_MODEL', DEFAULT_MODEL))
+            task = args.task or input('What should the agent do? ').strip()
+            def approve(name, arguments, preview):
+                print(f'[GBM] Proposed action: {name} '+json.dumps(arguments, ensure_ascii=True))
+                if preview:
+                    print(preview[:8000])
+                    if len(preview)>8000:
+                        folder=project.home/'agents'/'proposals'; folder.mkdir(parents=True, exist_ok=True)
+                        patch=folder/(uuid.uuid4().hex+'.diff')
+                        patch.write_text(preview, encoding='utf-8')
+                        print(f'[GBM] Full proposed diff: {patch}')
+                return input('Approve this action? [y/N]: ').strip().lower()=='y'
+            def confirm():
+                return input('Merge these changes into your original project? [y/N]: ').strip().lower()=='y'
+            coding_agent.run(project, task, client, args.manual, lambda: require_active(project), approve, confirm,
+                             max_steps=args.max_steps, max_seconds=args.max_seconds, runner=args.test_runner)
+            return 0
         if args.command == 'try':
             from . import workspaces
             with command_lock(project, args.command):
