@@ -4,6 +4,7 @@ import re
 import urllib.error
 import urllib.request
 from .core import GBMError
+from . import __version__
 
 ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions'
 DEFAULT_MODEL = 'llama-3.3-70b-versatile'
@@ -36,17 +37,42 @@ class GroqClient:
             raise GBMError('Set GROQ_API_KEY locally before using gbm agent. Do not put it in project files.')
         self.key, self.model = key, model
 
-    def complete(self, messages, tools):
+    def complete(self, messages, tools, tool_choice='auto'):
         payload = {'model': self.model, 'messages': messages, 'tools': tools,
-                   'tool_choice': 'auto', 'parallel_tool_calls': False,
+                   'tool_choice': tool_choice, 'parallel_tool_calls': False,
                    'temperature': 0.2, 'max_tokens': 3000}
         if len(json.dumps(messages)) > 60000:
             raise GBMError('Agent context budget reached. Use a smaller, more specific task.')
-        request = urllib.request.Request(ENDPOINT, data=json.dumps(payload).encode(), method='POST',
+        data = self.request(ENDPOINT, payload)
+        try:
+            message = data['choices'][0]['message']
+            if not isinstance(message, dict):
+                raise ValueError()
+            calls = message.get('tool_calls') or []
+            if not isinstance(calls, list) or len(calls) > 8:
+                raise ValueError()
+            return {'role': 'assistant', 'content': message.get('content') or '',
+                    **({'tool_calls': calls} if calls else {})}
+        except (ValueError, KeyError, IndexError, TypeError):
+            raise GBMError('Groq returned an invalid agent response.')
+
+    def list_models(self):
+        data = self.request(ENDPOINT.rsplit('/', 2)[0] + '/models')
+        try:
+            entries = data['data']
+            if not isinstance(entries,list): raise ValueError()
+            return sorted({entry['id'] for entry in entries
+                           if isinstance(entry,dict) and isinstance(entry.get('id'),str) and entry.get('active',True)})
+        except (ValueError,KeyError,TypeError):
+            raise GBMError('Groq returned an invalid model list.') from None
+
+    def request(self, url, payload=None):
+        request = urllib.request.Request(url, data=json.dumps(payload).encode() if payload is not None else None,
+                                        method='POST' if payload is not None else 'GET',
                                         headers={'Authorization': 'Bearer ' + self.key,
                                                  'Content-Type': 'application/json',
                                                  'Accept': 'application/json',
-                                                 'User-Agent': 'GBM/1.9.1 (+https://github.com/SumanyuDeshpande/GBM)'})
+                                                 'User-Agent': f'GBM/{__version__} (+https://github.com/SumanyuDeshpande/GBM)'})
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 raw = response.read(1024*1024+1)
@@ -67,14 +93,6 @@ class GroqClient:
         if len(raw) > 1024*1024:
             raise GBMError('Groq response exceeded the agent response limit.')
         try:
-            data = json.loads(raw)
-            message = data['choices'][0]['message']
-            if not isinstance(message, dict):
-                raise ValueError()
-            calls = message.get('tool_calls') or []
-            if not isinstance(calls, list) or len(calls) > 8:
-                raise ValueError()
-            return {'role': 'assistant', 'content': message.get('content') or '',
-                    **({'tool_calls': calls} if calls else {})}
+            return json.loads(raw)
         except (ValueError, KeyError, IndexError, TypeError):
             raise GBMError('Groq returned an invalid agent response.')

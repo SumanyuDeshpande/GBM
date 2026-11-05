@@ -31,6 +31,7 @@ def main(argv=None):
     commands.add_parser('watch', help='Start background monitoring')
     commands.add_parser('status', help='Show watcher heartbeat and checkpoint count')
     commands.add_parser('stop', help='Stop monitoring gracefully')
+    commands.add_parser('setup', help='Configure Groq credentials and default model once for all projects')
     browse = commands.add_parser('history', help='Browse recorded project or file checkpoints')
     browse.add_argument('file', nargs='?')
     browse.add_argument('--limit', type=int, default=20, help='Maximum entries to show (default: 20)')
@@ -65,7 +66,7 @@ def main(argv=None):
     modes.add_argument('--auto', action='store_true', help='Perform bounded tool actions automatically')
     agent.add_argument('--test', action='store_true', required=True, help='Require final test execution or explicitly report denied/missing tests')
     agent.add_argument('task', nargs='?', help='Task to perform; prompted if omitted')
-    agent.add_argument('--model', help='Groq model override (otherwise GROQ_MODEL or llama-3.3-70b-versatile)')
+    agent.add_argument('--model', help='Override GROQ_MODEL, saved setup model, or built-in fallback')
     agent.add_argument('--max-steps', type=int, default=10)
     agent.add_argument('--max-seconds', type=int, default=300)
     agent.add_argument('--test-runner', choices=['unittest','pytest'], default='unittest')
@@ -76,6 +77,10 @@ def main(argv=None):
     if args.command == 'undo' and args.minutes is not None and not args.file:
         parser.error('--minutes requires a file, for example: gbm undo main.py --minutes 5')
     try:
+        if args.command == 'setup':
+            from . import setup
+            setup.run()
+            return 0
         if args.command == '_watch':
             run(Project(args.root), args.token)
             return 0
@@ -90,8 +95,10 @@ def main(argv=None):
         if args.command == 'agent':
             import json
             from . import agent as coding_agent
-            from .groq_client import GroqClient, DEFAULT_MODEL
-            client = GroqClient(os.environ.get('GROQ_API_KEY'), args.model or os.environ.get('GROQ_MODEL', DEFAULT_MODEL))
+            from .groq_client import GroqClient
+            from .setup import resolve
+            key, model = resolve(args.model)
+            client = GroqClient(key, model)
             task = args.task or input('What should the agent do? ').strip()
             def approve(name, arguments, preview):
                 print(f'[GBM] Proposed action: {name} '+json.dumps(arguments, ensure_ascii=True))

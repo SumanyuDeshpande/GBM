@@ -20,10 +20,11 @@ For development, run `python -m pip install .` from the source checkout. If the 
 
 ## Command reference
 
-Run these commands inside your project. First run `gbm watch`: every project command requires an active watcher, except `gbm watch`, `gbm status`, and help. After `gbm stop`, commands return an inactive-monitoring error with a suggestion to run `gbm watch` again. `<file>` means any monitored file path, not just `main.py`; quote paths containing spaces. Replace placeholders such as `<file>` and `N` with actual values.
+Run these commands inside your project. First run `gbm watch`: every project command requires an active watcher, except `gbm setup`, `gbm watch`, `gbm status`, and help. After `gbm stop`, commands return an inactive-monitoring error with a suggestion to run `gbm watch` again. `<file>` means any monitored file path, not just `main.py`; quote paths containing spaces. Replace placeholders such as `<file>` and `N` with actual values.
 
 | Command | Purpose |
 | --- | --- |
+| `gbm setup` | Save your Groq key securely and choose a verified default model for all projects. |
 | `gbm watch` | Record the starting state and start background monitoring. |
 | `gbm status` | Show watcher status and checkpoint information. |
 | `gbm stop` | Capture current changes and stop monitoring. |
@@ -304,3 +305,28 @@ gbm agent --manual --test --model "openai/gpt-oss-120b" "Inspect this project wi
 ```
 
 If curl succeeds but GBM still fails, share the new error details with credentials removed. GBM does not automatically retry failed requests or silently switch models.
+
+## One-time agent setup (1.10.0)
+
+Run this from any folder, without starting monitoring:
+
+```console
+gbm setup
+```
+
+Setup asks for your own Groq key using hidden input, retrieves active model IDs from Groq, and lets you select a number or exact ID. The list may include non-chat models; only a model that passes an actual forced tool-call check can be saved. The check sends a small fixed prompt to Groq, uses your account quota, and executes no project code. A failed check changes nothing.
+
+After confirmation, the API key is stored in Windows Credential Manager. Only provider/model metadata is saved in the current user's `%APPDATA%\GBM\settings.json` on Windows (or `$XDG_CONFIG_HOME/GBM/settings.json`, default `~/.config/GBM/settings.json`, elsewhere). Nothing is saved in the project. Do not share your key in chat, screenshots, or commits.
+
+On macOS/Linux, install the optional `keyring` package (`python -m pip install keyring`) and configure an available native backend: macOS Keychain, Secret Service, or KWallet. GBM refuses plaintext and unsupported backends and never falls back to a plaintext key file. Headless machines can continue using environment variables without credential storage. Windows setup uses the built-in credential API and needs no extra Python package. Restricted execution environments can deny credential-store access; run setup in your normal interactive terminal.
+
+Then, in any project:
+
+```console
+gbm watch
+gbm agent --manual --test "Fix empty-input handling and add tests"
+```
+
+Run `gbm setup` again to replace the key or change the model. Press Enter at the hidden-key prompt to reuse a saved key. Cancelling or failing validation leaves the existing configuration unchanged. Model precedence is `--model`, then `GROQ_MODEL`, then the saved setup model, then the built-in fallback. `GROQ_API_KEY` overrides the saved credential; clear old environment overrides if you want the saved settings to take effect. Keys are never accepted as setup command-line arguments.
+
+Provider details: [Groq API reference](https://console.groq.com/docs/api-reference) and [local tool calling](https://console.groq.com/docs/tool-use/local-tool-calling).
