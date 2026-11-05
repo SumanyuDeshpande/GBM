@@ -56,6 +56,9 @@ def main(argv=None):
     experiment.add_argument('--budget', type=float, default=30.0, help='Total execution budget in seconds, 1..300 (excludes environment setup)')
     experiment.add_argument('--plan', action='store_true', help='Inspect and display probes without executing project code')
     experiment.add_argument('-y', '--yes', action='store_true', help='Approve executing the displayed probes without prompting')
+    workspace = commands.add_parser('try', help='Create a named project copy with its own fresh Python environment')
+    workspace.add_argument('name', help='Workspace name, such as new-auth')
+    workspace.add_argument('--path', help='Parent directory for the named workspace (outside the original project)')
     internal = commands.add_parser('_watch', help=argparse.SUPPRESS)
     internal.add_argument('root')
     internal.add_argument('token')
@@ -74,6 +77,26 @@ def main(argv=None):
                 print('[GBM] Watcher: INACTIVE. No history initialized.')
                 return 0
             raise GBMError('No GBM history exists. Run gbm watch first.')
+        if args.command == 'try':
+            from . import workspaces
+            with command_lock(project, args.command):
+                pass
+            # Preparation stores immutable objects but does not mutate history metadata.
+            # Keep the watcher free to heartbeat while large trees are read.
+            plan = workspaces.prepare(project, args.name, args.path, lambda: require_active(project))
+            print(f"[GBM] Creating workspace: {plan['destination']}")
+            print(f"[GBM] Copying {len(plan['files'])} files and {len(plan['directories'])} folders; skipped {len(plan['skipped'])} excluded/environment/link entries.")
+            result = workspaces.create(project, plan, lambda: require_active(project))
+            destination = Path(result['destination'])
+            print(f"[GBM] Workspace ready: {destination}")
+            print(f"[GBM] Fresh environment: {destination / '.venv'}")
+            print('[GBM] Project dependencies are not installed automatically. Open this folder and activate its environment.')
+            activate = destination / '.venv' / ('Scripts/activate.bat' if os.name == 'nt' else 'bin/activate')
+            print(f'[GBM] Activate (cmd): "{activate}"' if os.name == 'nt' else f'[GBM] Activate: source "{activate}"')
+            print(f"[GBM] Interpreter: {result['interpreter']}")
+            print('[GBM] Run gbm watch inside the new workspace to enable GBM commands there.')
+            print('[GBM] Review and copy selected code/dependency-file changes back manually; never copy .venv back. This is not a security sandbox.')
+            return 0
         if args.command == 'experiment':
             from . import experiments
             if bool(args.cases_file) != bool(args.target_file):

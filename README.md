@@ -48,6 +48,8 @@ Run these commands inside your project. First run `gbm watch`: every project com
 | `gbm experiment --use test.py --for main.py` | Run only supplied function or stdin cases against the selected Python file. |
 | `gbm experiment --plan` | Inspect the probe plan without executing project code. |
 | `gbm experiment replay <id>` | Rerun a saved experiment against its recorded source snapshot. |
+| `gbm try "<name>"` | Create a named project copy with a fresh, independent Python environment. |
+| `gbm try "<name>" --path "<parent>"` | Create the workspace under a chosen external parent directory. |
 | `gbm --help` | List commands. |
 | `gbm <command> --help` | Show a command's arguments and options. |
 
@@ -234,3 +236,29 @@ A `stdin` key selects script mode. The target runs as `__main__`, with exactly t
 Explicit checks produce PASS or FAIL. Import/dependency or harness failures are INCONCLUSIVE; timeouts and crashes retain their existing statuses. Expected exceptions are not added automatically. Output is captured with a 16384-character limit per stream; reports show the first 2000 characters and mark truncation, but comparisons use the full captured text before truncation. The isolated environment remains stdlib-only; dependencies are not installed automatically. Custom-mode exit status is 1 if any case fails, crashes, times out, is inconclusive, or is not run; otherwise it is 0. COMPLETED still means observed, not verified.
 
 The watch requirement, disposable copies, process limits, cancellation, and sandbox limitations from ordinary experiments apply. Each case starts from the same recorded project snapshot. Plans and reports retain supplied inputs and expectations. `gbm experiment replay <id>` preserves custom mode and reruns the recorded source/cases, even if either original file has changed. Runnable function and input-script examples are in `examples/custom_inputs/`.
+
+## Version 1.8 — named experiment workspaces
+
+```console
+gbm watch
+gbm try "new-auth"
+gbm try "new-library" --path "D:\Experiments"
+```
+
+`gbm try` copies the current eligible saved files and folders (including empty folders) into an external named workspace. By default the destination is `<project-parent>/.gbm-workspaces/<project-name>-<path-hash>/<name>`. `--path` selects a different **parent directory**, so the second example creates `D:\Experiments\new-library`. Names accept 1..64 ASCII letters, digits, hyphens, and underscores, beginning with a letter or digit; reserved device names are rejected. Existing destinations are never overwritten. Destinations inside the original project, or containing it, are rejected.
+
+The workspace gets its own fresh `.venv` using the Python interpreter running GBM, with pip bootstrapped offline from Python's bundled ensurepip. Existing environments are not copied or shared. GBM does not install project dependencies, run project setup scripts, launch an editor, activate your terminal, or change your current directory. It prints the workspace and interpreter paths. Open that folder in your editor, activate its environment, and explicitly install the dependencies you want to test. For Windows Command Prompt:
+
+```console
+cd /d "<printed-workspace-path>"
+.venv\Scripts\activate.bat
+python -m pip install -r requirements.txt
+```
+
+Only run the requirements command if that file exists and you want its declared dependencies; install new libraries in the workspace environment as needed. PowerShell activation uses `.venv\Scripts\Activate.ps1`; POSIX activation uses `source .venv/bin/activate`. Run `gbm watch` in the new workspace to enable GBM commands there. If GBM is not available after activation, use the original GBM executable or install `gbm-local` explicitly into the workspace environment.
+
+Workspace copies follow project exclusions. `.git`, the source `.gbm`, `.venv`, symbolic links, junctions, dependency caches, and detected Python environment folders containing `pyvenv.cfg` are skipped. A root file/directory named `.venv` is always reserved for the fresh environment. Git history, old GBM history, excluded secrets, packages, and unsaved editor buffers are not copied. The source project, its active session, its history cursor, and its installed dependencies are not restored or rewritten. Source bytes are stored in GBM objects during preparation, and the copy uses that recorded snapshot even if you subsequently edit the source. File contents are verified after copying, and file permission modes are retained where supported. Copy limits are 20000 files / 512 MiB.
+
+Origin, manifest, skipped paths, interpreter version, and setup status are stored at `<workspace>/.gbm/workspace.json`. Pip setup logs are at `.gbm/setup.log`; package installation from this step does not contact PyPI. `gbm stop` in the original project cancels unfinished copying/bootstrap work when next checked. Pip setup is time-limited to 60 seconds and its process group/tree is cleaned up. A failure or cancellation leaves an INCOMPLETE workspace for inspection; GBM does not report success, overwrite it on retry, or recursively delete potentially useful copied files. Choose a new name after inspecting an incomplete attempt. An abrupt process termination can leave a CREATING marker.
+
+This command creates a workspace; automatic merging, workspace deletion/listing, and bringing selected changes back are not implemented. If an experiment succeeds, review differences and copy the desired source/dependency-file changes back manually. Never copy `.venv` back. A workspace and virtual environment isolate normal project-file/package work; they do not isolate databases, network calls, absolute paths, system-wide tools, or other external effects.
