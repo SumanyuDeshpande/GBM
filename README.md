@@ -292,3 +292,15 @@ GBM records actual test outcomes, saves a full diff and local JSON report under 
 Default limits are 10 model rounds, 40 tool calls, 300 seconds and 50 changed files/folders per merge. Use `--max-steps` (1–30), `--max-seconds` (30–900), and `--model` to configure a run. An in-flight API request may take up to its timeout before a stopped watcher is noticed. Budget failures and provider errors retain the workspace and report without merging. The default model is `llama-3.3-70b-versatile`; `GROQ_MODEL` also configures it.
 
 Groq reference: [local tool calling](https://console.groq.com/docs/tool-use/local-tool-calling).
+
+## Groq connection diagnostics (1.9.1)
+
+GBM identifies its HTTP client explicitly and requests JSON responses. Failed API requests show the HTTP status and bounded, credential-redacted JSON error message/type/code. HTML gateway pages are not printed; recognized gateway error codes are shown. A 403 alone does not prove that a key or model is invalid.
+
+If a model works in your Groq Playground, select the same model explicitly, for example:
+
+```console
+gbm agent --manual --test --model "openai/gpt-oss-120b" "Inspect this project without changing files"
+```
+
+If curl succeeds but GBM still fails, share the new error details with credentials removed. GBM does not automatically retry failed requests or silently switch models.

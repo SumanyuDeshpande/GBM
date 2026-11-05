@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gbm-local"
-version = "1.9.0"
+version = "1.9.1"
 description = "Automatic local project checkpoints and recovery"
 readme = "README.md"
 requires-python = ">=3.10"
