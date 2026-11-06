@@ -24,6 +24,7 @@ Run these commands inside your project. First run `gbm watch`: every project com
 
 | Command | Purpose |
 | --- | --- |
+| `gbm integrate "<path-or-docs-URL>" --goal "<behavior>"` | Plan and implement a local-module or HTTP API integration in a reviewed workspace. |
 | `gbm setup` | Save your Groq key securely and choose a verified default model for all projects. |
 | `gbm watch` | Record the starting state and start background monitoring. |
 | `gbm status` | Show watcher status and checkpoint information. |
@@ -330,3 +331,28 @@ gbm agent --manual --test "Fix empty-input handling and add tests"
 Run `gbm setup` again to replace the key or change the model. Press Enter at the hidden-key prompt to reuse a saved key. Cancelling or failing validation leaves the existing configuration unchanged. Model precedence is `--model`, then `GROQ_MODEL`, then the saved setup model, then the built-in fallback. `GROQ_API_KEY` overrides the saved credential; clear old environment overrides if you want the saved settings to take effect. Keys are never accepted as setup command-line arguments.
 
 Provider details: [Groq API reference](https://console.groq.com/docs/api-reference) and [local tool calling](https://console.groq.com/docs/tool-use/local-tool-calling).
+
+## Reviewed integrations (1.11.0)
+
+`gbm integrate` connects an eligible local module, local API specification, or HTTP API documentation to the current project. It uses the Groq configuration from `gbm setup`. Start `gbm watch` in the destination project first.
+
+```console
+gbm integrate "../payment-module" --goal "Connect the payment calculation helper to checkout and add offline tests"
+gbm integrate "./specs/openapi.json" --goal "Add a client for the documented inventory endpoints"
+gbm integrate "https://api.example.com/docs" --goal "Add delivery tracking to order details"
+gbm integrate "http://localhost:8000/openapi.json" --allow-local --goal "Connect the frontend to this local backend"
+```
+
+The `example.com` address is a placeholder; supply real readable documentation. If `--goal` is omitted, GBM asks what behavior you want. The destination is the current monitored project. There is no `--into` option in this release.
+
+The workflow creates a fresh external workspace before reading the target, asks permission to read its eligible text and send it to Groq, lets the model inspect the project and ask up to five nonsecret clarification questions, then requires approval of a concrete integration plan. Writes and tests are blocked until that plan is approved. Manual action approval is the default. `--auto` automates ordinary actions but still requires target approval, plan approval and final merge approval. `--manual` makes the default explicit.
+
+The target is a read-only reference snapshot, not an automatically copied dependency tree. GBM can write the needed files into the workspace, connect existing imports/routes/configuration, and add offline tests. Review the complete diff and actual test outcome before approving the final merge. Original files stay unchanged until approval; concurrent source changes cancel the merge. Declining the final merge removes the workspace. Errors retain it for review. Reports and diffs are under `.gbm/agents/`, with `kind: integration`; interrupted merges use `gbm recover`. Existing source sessions are preserved.
+
+HTTP mode performs one GET to the supplied documentation URL, without credentials/cookies, redirects or crawling. It accepts UTF-8 HTML/text/JSON/YAML up to 256 KiB; HTML scripts/styles are removed. It does not execute browser JavaScript, infer private APIs from arbitrary websites, import a remote repository, or access authenticated documentation. Supply a local specification when necessary. URL credentials, query parameters and fragments are rejected. Local/private documentation endpoints require `--allow-local` and explicit target approval. Only choose endpoints you trust and are authorized to read; this is not a network isolation boundary.
+
+Local references are limited to 100 UTF-8 text files, 64 KiB each and 512 KiB total. Common credential files, environments, generated folders and links are excluded. Do not put secrets in source files, API documents, goals or clarification answers. Snapshotting the reference never initializes GBM or changes files in it.
+
+This first release generates integration code and attempts offline checks. It offers no cloud deployment, package installation, database migration/write, live service test, or remote configuration tools. Configure service credentials privately afterward; generated code should use placeholders/environment lookups. A copied workspace is not a security sandbox: project code/tests can have external effects. Tests use the fresh Python environment with unittest (or `--test-runner pytest`, if available); dependencies are not installed automatically. Frontend/non-Python integrations may need manual checks, and zero tests are INCONCLUSIVE, never proof of success. Review generated code before executing it.
+
+Overrides include `--model`, `--max-steps` (default 20; range 1–30), and `--max-seconds` (default 600; range 30–900). The existing 40-tool-call and 50-changed-files/folders merge limits apply. A working live integration or perfect merge is not guaranteed; the report must distinguish generated code, offline verification and remaining manual setup.

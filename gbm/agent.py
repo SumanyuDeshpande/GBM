@@ -90,7 +90,7 @@ def discard_workspace(root,run_id,source_root):
     shutil.rmtree(resolved)
 
 
-def run(project,task,client,manual,check_active,approve,confirm,emit=print,max_steps=10,max_seconds=300,runner='unittest'):
+def run(project,task,client,manual,check_active,approve,confirm,emit=print,max_steps=10,max_seconds=300,runner='unittest',tool_factory=None):
     if not task.strip() or len(task)>8000: raise GBMError('Supply a task of 1..8000 characters.')
     if not 1<=max_steps<=30 or not 30<=max_seconds<=900: raise GBMError('Agent limits: 1..30 steps and 30..900 seconds.')
     secret=getattr(client,'key','')
@@ -125,13 +125,16 @@ def run(project,task,client,manual,check_active,approve,confirm,emit=print,max_s
         save(workspace.home/'agent-owner.json',{'id':identifier})
         copied=sessions.snapshot(workspace)
         tools=AgentTools(project,workspace,result['interpreter'],check,approve,manual)
+        if tool_factory:
+            tools=tool_factory(tools,record)
+            save(report_path,record,secret)
         emit(f'[GBM] Agent workspace: {workspace.root}')
         emit('[GBM] Task and approved file contents/tool results are sent to Groq. The workspace is not a security sandbox.')
-        messages=[{'role':'system','content':SYSTEM},{'role':'user','content':task}]
+        messages=[{'role':'system','content':SYSTEM+getattr(tools,'instructions','')},{'role':'user','content':task}]
         finished=False; calls_used=0; record['status']='RUNNING'
         for step in range(max_steps):
             check(); emit(f'[GBM] Agent step {step+1}/{max_steps}')
-            message=client.complete(messages,TOOLS)
+            message=client.complete(messages,getattr(tools,'schemas',TOOLS))
             check()
             content=message.get('content') or ''
             if not isinstance(content,str): raise GBMError('Invalid assistant content.')

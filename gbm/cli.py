@@ -70,6 +70,17 @@ def main(argv=None):
     agent.add_argument('--max-steps', type=int, default=10)
     agent.add_argument('--max-seconds', type=int, default=300)
     agent.add_argument('--test-runner', choices=['unittest','pytest'], default='unittest')
+    integration = commands.add_parser('integrate', help='Connect a local module or documented HTTP API in a reviewed workspace')
+    integration.add_argument('target', help='Local module/specification path or HTTP(S) documentation URL')
+    integration.add_argument('--goal', help='Desired behavior; prompted when omitted')
+    integration.add_argument('--model', help='Override the saved/default Groq model')
+    integration_modes = integration.add_mutually_exclusive_group()
+    integration_modes.add_argument('--manual', action='store_true', help='Approve each action (default)')
+    integration_modes.add_argument('--auto', action='store_true', help='Automate actions after mandatory target and plan approval')
+    integration.add_argument('--allow-local', action='store_true', help='Allow the explicitly supplied local/private HTTP documentation endpoint')
+    integration.add_argument('--max-steps', type=int, default=20)
+    integration.add_argument('--max-seconds', type=int, default=600)
+    integration.add_argument('--test-runner', choices=['unittest','pytest'], default='unittest')
     internal = commands.add_parser('_watch', help=argparse.SUPPRESS)
     internal.add_argument('root')
     internal.add_argument('token')
@@ -92,14 +103,15 @@ def main(argv=None):
                 print('[GBM] Watcher: INACTIVE. No history initialized.')
                 return 0
             raise GBMError('No GBM history exists. Run gbm watch first.')
-        if args.command == 'agent':
+        if args.command in ('agent','integrate'):
             import json
             from . import agent as coding_agent
             from .groq_client import GroqClient
             from .setup import resolve
             key, model = resolve(args.model)
             client = GroqClient(key, model)
-            task = args.task or input('What should the agent do? ').strip()
+            if args.command == 'agent':
+                task = args.task or input('What should the agent do? ').strip()
             def approve(name, arguments, preview):
                 print(f'[GBM] Proposed action: {name} '+json.dumps(arguments, ensure_ascii=True))
                 if preview:
@@ -111,7 +123,15 @@ def main(argv=None):
                         print(f'[GBM] Full proposed diff: {patch}')
                 return input('Approve this action? [y/N]: ').strip().lower()=='y'
             def confirm():
-                return input('Merge these changes into your original project? [y/N]: ').strip().lower()=='y'
+                prompt = 'Merge integration into your original project?' if args.command=='integrate' else 'Merge these changes into your original project?'
+                return input(prompt+' [y/N]: ').strip().lower()=='y'
+            if args.command == 'integrate':
+                from . import integrate
+                goal = args.goal or input('What should this integration do? ').strip()
+                integrate.run(project,args.target,goal,client,not args.auto,lambda:require_active(project),approve,confirm,
+                              allow_local=args.allow_local,max_steps=args.max_steps,max_seconds=args.max_seconds,
+                              runner=args.test_runner)
+                return 0
             coding_agent.run(project, task, client, args.manual, lambda: require_active(project), approve, confirm,
                              max_steps=args.max_steps, max_seconds=args.max_seconds, runner=args.test_runner)
             return 0
